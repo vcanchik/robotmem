@@ -1,3 +1,5 @@
+[中文版](README_zh.md)
+
 # robotmem — Let Robots Learn from Experience
 
 > Your robot ran 1000 experiments, starting from scratch every time. robotmem stores episode experiences — parameters, trajectories, outcomes — and retrieves the most relevant ones to guide future decisions.
