@@ -80,13 +80,15 @@ def doctor():
             logger.debug("FTS5 检查跳过: %s", e)
 
         # vec0 同步检查
+        # 注意：不是所有记忆都有 embedding（embed_backend='none' 或 embedding 失败）
+        # vec_count <= total 是正常的，vec_count > total 才是异常（孤儿 vec 条目）
         vec_count = None
         vec_ok = None
         try:
             vec_count = conn.execute(
                 "SELECT COUNT(*) FROM memories_vec"
             ).fetchone()[0]
-            vec_ok = vec_count == total
+            vec_ok = vec_count <= total
         except sqlite3.OperationalError as e:
             logger.debug("vec0 检查跳过: %s", e)
 
@@ -124,7 +126,7 @@ def doctor():
             },
             "vec0": {
                 "indexed": vec_count,
-                "expected": total,
+                "total_memories": total,
                 "ok": vec_ok,
             },
             "zero_hit": {
@@ -345,24 +347,9 @@ def search_memories():
         from ..ops.search import fts_search_memories
         conn = db.conn
 
-        # 如果指定了 collection，按 collection 搜索
-        if collection:
-            results = fts_search_memories(conn, query, collection, limit=top_k)
-        else:
-            # 未指定 collection — 搜所有 collection
-            collections = [
-                r[0] for r in conn.execute(
-                    "SELECT DISTINCT collection FROM memories"
-                ).fetchall()
-            ]
-            results = []
-            for coll in collections:
-                results.extend(
-                    fts_search_memories(conn, query, coll, limit=top_k)
-                )
-            # 按 bm25_score 排序（越小越好）
-            results.sort(key=lambda x: x.get("bm25_score", 0))
-            results = results[:top_k]
+        # collection 为空时传 None → 单次查询搜所有 collection
+        coll_param = collection if collection else None
+        results = fts_search_memories(conn, query, coll_param, limit=top_k)
 
         # context JSON 解析 — 提取 params/spatial/robot 便捷字段
         # perception_data 可能是大型 blob，搜索列表不返回（详情端点返回）

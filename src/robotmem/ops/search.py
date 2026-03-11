@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 def fts_search_memories(
     conn: sqlite3.Connection,
     query: str,
-    collection: str,
+    collection: str | None,
     limit: int = 10,
 ) -> list[dict]:
     """BM25 全文搜索 memories — recall 用
@@ -28,6 +28,9 @@ def fts_search_memories(
     返回完整字段: id, content, human_summary, type, perception_type,
     session_id, category, confidence, context, scope_files,
     scope_entities, created_at, perception_data, bm25_score
+
+    Args:
+        collection: 指定 collection 过滤。None = 搜索所有 collection。
 
     三层防御：
     - L1 事前：query 非空 + FTS5 语法清理
@@ -52,8 +55,9 @@ def fts_search_memories(
     if not fts5_query:
         return []
 
-    try:
-        rows = conn.execute("""
+    # 两条静态 SQL，避免 f-string 拼接（编码规范 P0 #9）
+    if collection is not None:
+        sql = """
             SELECT m.id, m.content, m.human_summary, m.type, m.perception_type,
                    m.session_id, m.category, m.confidence,
                    m.context, m.scope_files, m.scope_entities,
@@ -66,7 +70,26 @@ def fts_search_memories(
               AND m.status = 'active'
             ORDER BY bm25(memories_fts)
             LIMIT ?
-        """, [fts5_query, collection, limit]).fetchall()
+        """
+        params = [fts5_query, collection, limit]
+    else:
+        sql = """
+            SELECT m.id, m.content, m.human_summary, m.type, m.perception_type,
+                   m.session_id, m.category, m.confidence,
+                   m.context, m.scope_files, m.scope_entities,
+                   m.created_at, m.perception_data,
+                   bm25(memories_fts) as bm25_score
+            FROM memories_fts
+            JOIN memories m ON m.id = memories_fts.rowid
+            WHERE memories_fts MATCH ?
+              AND m.status = 'active'
+            ORDER BY bm25(memories_fts)
+            LIMIT ?
+        """
+        params = [fts5_query, limit]
+
+    try:
+        rows = conn.execute(sql, params).fetchall()
 
         return [
             {

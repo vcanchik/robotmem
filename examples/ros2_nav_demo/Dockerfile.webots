@@ -4,13 +4,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-webots-ros2 \
     xvfb \
     python3-pip \
+    wget \
+    bzip2 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install --no-cache-dir git+https://github.com/robotmem/robotmem.git
+# 直接下载 Webots（跳过交互式安装器）
+RUN wget -q https://github.com/cyberbotics/webots/releases/download/R2025a/webots-R2025a-x86-64.tar.bz2 \
+    && tar xjf webots-R2025a-x86-64.tar.bz2 -C /usr/local \
+    && rm webots-R2025a-x86-64.tar.bz2
 
-COPY entrypoint-webots.sh /entrypoint.sh
+ENV WEBOTS_HOME=/usr/local/webots
+
+# robotmem 依赖（跳过 pip install robotmem 的 setuptools 兼容问题）
+RUN pip3 install --no-cache-dir "sqlite-vec>=0.1.6,<0.2.0" "fastembed>=0.4" "pydantic>=2.0"
+
+# 复制 robotmem 源码，PYTHONPATH 方式加载
+COPY src/robotmem/ /opt/robotmem/src/robotmem/
+ENV PYTHONPATH=/opt/robotmem/src
+
+COPY examples/ros2_nav_demo/entrypoint-webots.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-COPY demo.py /demo.py
+COPY examples/ros2_nav_demo/demo.py /demo.py
 
 ENTRYPOINT ["/entrypoint.sh"]

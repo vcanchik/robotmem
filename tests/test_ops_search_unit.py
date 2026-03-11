@@ -119,6 +119,35 @@ class TestFtsSearchMemories:
         for r in results:
             assert r["id"] != 4
 
+    def test_collection_none_searches_all(self, search_conn):
+        """collection=None 搜索所有 collection"""
+        # 插入另一个 collection 的数据
+        search_conn.execute("""
+            INSERT INTO memories (id, collection, type, content, human_summary,
+                                 category, confidence, decay_rate, source, scope,
+                                 status, scope_files, scope_entities)
+            VALUES (10, 'other-coll', 'fact', 'robot navigation path planning', 'nav',
+                    'observation', 0.9, 0.01, 'tool', 'project', 'active', '[]', '[]')
+        """)
+        search_conn.execute(
+            "INSERT INTO memories_fts(rowid, content, human_summary, scope_files, scope_entities) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (10, "robot navigation path planning", "nav", "[]", "[]"),
+        )
+        search_conn.commit()
+
+        # collection=None → 搜所有
+        results = fts_search_memories(search_conn, "robot", None)
+        ids = {r["id"] for r in results}
+        assert 1 in ids   # collection='test'
+        assert 10 in ids  # collection='other-coll'
+
+    def test_collection_none_vs_specific(self, search_conn):
+        """collection=None 比指定 collection 返回更多结果"""
+        results_all = fts_search_memories(search_conn, "object", None)
+        results_test = fts_search_memories(search_conn, "object", "test")
+        assert len(results_all) >= len(results_test)
+
 
 class TestVecSearchMemories:
     def test_not_vec_loaded(self, search_conn):

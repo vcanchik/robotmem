@@ -296,6 +296,28 @@ class TestLifecycle:
         mem.close()
         # fixture teardown 会再调一次 close
 
+    def test_close_releases_onnx_embedder(self, tmp_path):
+        """close() 释放 ONNX embedder 引用（~67MB 模型）"""
+        m = RobotMemory(
+            db_path=str(tmp_path / "onnx.db"),
+            embed_backend="onnx",  # 创建 FastEmbedEmbedder，但模型延迟加载
+        )
+        embedder = m._embedder
+        assert embedder is not None
+        m.close()
+        assert m._embedder is None
+        assert m._closed
+
+    def test_close_none_backend_no_error(self, tmp_path):
+        """embed_backend="none" 时 close 不崩溃"""
+        m = RobotMemory(
+            db_path=str(tmp_path / "none_close.db"),
+            embed_backend="none",
+        )
+        assert m._embedder is None
+        m.close()
+        assert m._closed
+
 
 # ── save_perception ──
 

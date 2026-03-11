@@ -451,6 +451,27 @@ class TestDoctor:
         assert data["sessions"]["by_status"]["active"] == 1
         assert data["sessions"]["by_status"]["ended"] == 1
 
+    def test_vec0_ok_when_partial_embeddings(self, app):
+        """vec_count < total 时 vec0.ok 仍为 True（部分记忆无 embedding 是正常的）"""
+        db = app.config["ROBOTMEM_DB"]
+        conn = db.conn
+        # 插入记忆但不插入 vec0 条目（模拟 embed_backend='none'）
+        conn.execute("""
+            INSERT INTO memories (id, collection, type, content, human_summary,
+                                 category, confidence, decay_rate, source, scope,
+                                 status, scope_files, scope_entities)
+            VALUES (100, 'test', 'fact', 'no embedding memory', 'no emb',
+                    'observation', 0.9, 0.01, 'sdk', 'project', 'active', '[]', '[]')
+        """)
+        conn.commit()
+
+        client = app.test_client()
+        res = client.get("/api/doctor")
+        data = res.get_json()
+        # vec_count=0 < total=1 → vec_ok 应为 True（不是误报）
+        assert data["vec0"]["ok"] is True
+        assert data["vec0"]["total_memories"] >= 1
+
 
 class TestMemoriesExtendedFilters:
     """GET /api/memories 扩展参数"""

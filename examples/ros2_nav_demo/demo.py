@@ -45,10 +45,11 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
-import math, time, json, os, sys, shutil, argparse, random
+import math, time, json, os, sys, argparse, random
 
 from robotmem.sdk import RobotMemory
 
+# Demo 用独立 DB，不污染主 ~/.robotmem/memory.db
 DB_DIR = os.path.expanduser("~/.robotmem-ros-demo")
 DB_PATH = os.path.join(DB_DIR, "memory.db")
 COLLECTION = "ros_nav_demo"
@@ -61,8 +62,8 @@ class ExploreNode(Node):
     BACKUP = 1
     TURN = 2
 
-    def __init__(self, duration=25.0, cmd_topic="/originbot_1/cmd_vel",
-                 odom_topic="/originbot_1/odom"):
+    def __init__(self, duration=25.0, cmd_topic="/cmd_vel",
+                 odom_topic="/odom"):
         super().__init__("explore_node")
         self.pub = self.create_publisher(Twist, cmd_topic, 10)
         self.create_subscription(Odometry, odom_topic, self._odom_cb, 10)
@@ -70,6 +71,7 @@ class ExploreNode(Node):
 
         self.duration = duration
         self.t0 = time.time()
+        self.explore_t0 = None  # 首次收到 odom 时设置
         self.positions = []
         self.waypoints = []
         self.pos = None
@@ -84,23 +86,33 @@ class ExploreNode(Node):
     def _odom_cb(self, msg):
         p = msg.pose.pose.position
         self.pos = (p.x, p.y)
-        self.positions.append((p.x, p.y, time.time() - self.t0))
+        if self.explore_t0 is None:
+            self.explore_t0 = time.time()
+            self.get_logger().info("收到 odom，开始探索")
+        self.positions.append((p.x, p.y, time.time() - self.explore_t0))
 
         now = time.time()
-        if now - self.last_wp_t > 1.5:
+        if now - self.last_wp_t > 2.0:
             self.waypoints.append((p.x, p.y))
             self.last_wp_t = now
 
     def _loop(self):
         if self.done:
             return
-        if time.time() - self.t0 > self.duration:
+        # 从首次收到 odom 开始计时
+        if self.explore_t0 is None:
+            # 安全超时：120s 内没收到 odom 就退出
+            if time.time() - self.t0 > 120:
+                self.done = True
+                self.get_logger().error("120s 内未收到 odom，退出")
+            return
+        if time.time() - self.explore_t0 > self.duration:
             self.pub.publish(Twist())
             self.done = True
             self.get_logger().info(
                 f"探索完成: {len(self.waypoints)} 航点, "
                 f"{len(self.positions)} 位置, "
-                f"{time.time()-self.t0:.1f}s"
+                f"{time.time()-self.explore_t0:.1f}s"
             )
             return
 
@@ -149,8 +161,8 @@ class NavNode(Node):
     BACKUP = 1
     TURN = 2
 
-    def __init__(self, waypoints, cmd_topic="/originbot_1/cmd_vel",
-                 odom_topic="/originbot_1/odom", timeout=60.0):
+    def __init__(self, waypoints, cmd_topic="/cmd_vel",
+                 odom_topic="/odom", timeout=120.0):
         super().__init__("nav_node")
         self.pub = self.create_publisher(Twist, cmd_topic, 10)
         self.create_subscription(Odometry, odom_topic, self._odom_cb, 10)
@@ -162,6 +174,7 @@ class NavNode(Node):
         self.prev_pos = None
         self.yaw = 0.0
         self.t0 = time.time()
+        self.nav_t0 = None  # 导航开始时间（首次收到 odom 时设置）
         self.timeout = timeout
         self.positions = []
         self.done = False
@@ -175,7 +188,10 @@ class NavNode(Node):
     def _odom_cb(self, msg):
         p = msg.pose.pose.position
         self.pos = (p.x, p.y)
-        self.positions.append((p.x, p.y, time.time() - self.t0))
+        if self.nav_t0 is None:
+            self.nav_t0 = time.time()
+            self.get_logger().info("收到 odom，开始导航")
+        self.positions.append((p.x, p.y, time.time() - (self.nav_t0 or self.t0)))
         q = msg.pose.pose.orientation
         self.yaw = math.atan2(
             2.0 * (q.w * q.z + q.x * q.y),
@@ -185,7 +201,7 @@ class NavNode(Node):
     def _finish(self, reason="done"):
         self.pub.publish(Twist())
         self.done = True
-        t = time.time() - self.t0
+        t = time.time() - (self.nav_t0 or self.t0)
         self.get_logger().info(
             f"导航{reason}: {t:.1f}s, {self.idx}/{len(self.wps)} 航点, "
             f"跳过 {self.skipped}")
@@ -197,9 +213,16 @@ class NavNode(Node):
         self.state = self.NAVIGATE
 
     def _loop(self):
-        if self.done or self.pos is None:
+        if self.done:
             return
-        if time.time() - self.t0 > self.timeout:
+        # 安全超时：即使没收到 odom 也不能无限等待
+        if time.time() - self.t0 > self.timeout + 120:
+            self._finish("odom 超时")
+            return
+        if self.pos is None:
+            return
+        # 导航超时：从首次收到 odom 开始计算
+        if self.nav_t0 and time.time() - self.nav_t0 > self.timeout:
             self._finish("超时")
             return
         if self.idx >= len(self.wps):
@@ -214,7 +237,7 @@ class NavNode(Node):
             cx, cy = self.pos
             dist = math.hypot(tx - cx, ty - cy)
 
-            if dist < 0.5:
+            if dist < 0.8:
                 self._next_wp()
                 return
 
@@ -246,11 +269,11 @@ class NavNode(Node):
                 while err < -math.pi:
                     err += 2 * math.pi
                 if abs(err) > 0.3:
-                    cmd.angular.z = max(-1.0, min(1.0, 1.2 * err))
-                    cmd.linear.x = 0.05
+                    cmd.angular.z = max(-1.5, min(1.5, 1.5 * err))
+                    cmd.linear.x = 0.1
                 else:
-                    cmd.linear.x = min(0.3, dist)
-                    cmd.angular.z = 0.5 * err
+                    cmd.linear.x = min(0.4, dist)
+                    cmd.angular.z = 0.6 * err
 
         elif self.state == self.BACKUP:
             cmd.linear.x = -0.2
@@ -299,9 +322,9 @@ def main():
     cmd_topic = f"{prefix}/cmd_vel"
     odom_topic = f"{prefix}/odom"
 
-    # 清理旧数据
-    if os.path.exists(DB_DIR):
-        shutil.rmtree(DB_DIR)
+    # 清理旧数据（只删 DB 文件，不删整个目录）
+    if os.path.exists(DB_PATH):
+        os.remove(DB_PATH)
     os.makedirs(DB_DIR, exist_ok=True)
 
     rclpy.init()
@@ -332,6 +355,7 @@ def main():
 
     # 存入 robotmem
     print("  存入 robotmem ...")
+    learn_ok = False
     with RobotMemory(db_path=DB_PATH, collection=COLLECTION,
                      embed_backend="none") as mem:
         with mem.session(context={"task": "navigation", "phase": "explore"}) as sid:
@@ -349,9 +373,9 @@ def main():
                     },
                 )
                 print("  learn ✓")
+                learn_ok = True
             except Exception as e:
                 print(f"  learn ERROR: {e}")
-                raise
 
             try:
                 mem.save_perception(
@@ -362,16 +386,21 @@ def main():
                 print("  save_perception ✓")
             except Exception as e:
                 print(f"  save_perception ERROR: {e}")
-                raise
+
+    if not learn_ok:
+        print("  ERROR: learn 失败，无法进行返航 Demo")
+        exp.destroy_node()
+        rclpy.shutdown()
+        return
 
     exp.destroy_node()
 
     print("\n  暂停 2s（模拟新任务：返回出发点）...")
     time.sleep(2)
 
-    # ── Session 2: 记忆导航（反转航点，原路返回） ──
+    # ── Session 2: 记忆导航（recall 起点，直接返航） ──
     print("\n--- Session 2: 记忆返航 ---")
-    recalled_wps = []
+    return_wps = []
     with RobotMemory(db_path=DB_PATH, collection=COLLECTION,
                      embed_backend="none") as mem:
         with mem.session(context={"task": "navigation", "phase": "return"}) as sid:
@@ -380,20 +409,35 @@ def main():
             for r in results:
                 ctx = r.get("context")
                 if isinstance(ctx, str):
-                    ctx = json.loads(ctx)
+                    try:
+                        ctx = json.loads(ctx)
+                    except json.JSONDecodeError:
+                        continue
                 if isinstance(ctx, dict):
-                    w = ctx.get("spatial", {}).get("waypoints", [])
-                    if w:
-                        recalled_wps = [tuple(p) for p in w][::-1]  # 反转：原路返回
-                        print(f"  提取航点: {len(recalled_wps)}（反转，原路返回）")
+                    spatial = ctx.get("spatial", {})
+                    start = spatial.get("start")
+                    all_wps = spatial.get("waypoints", [])
+                    if start and len(all_wps) >= 2:
+                        # 反转关键航点：从当前位置直接回起点
+                        reversed_wps = [tuple(p) for p in all_wps if isinstance(p, (list, tuple)) and len(p) == 2][::-1]
+                        if not reversed_wps:
+                            continue
+                        # 间隔采样（每隔 2 个取 1 个），减少中间航点开销
+                        sampled = reversed_wps[::2]
+                        # 确保最后一个是起点
+                        start_pt = tuple(start)
+                        if sampled[-1] != start_pt:
+                            sampled.append(start_pt)
+                        return_wps = sampled
+                        print(f"  全部航点: {len(all_wps)} → 采样: {len(return_wps)}（反转，直接返航）")
                         break
 
-    if not recalled_wps:
+    if not return_wps:
         print("  ERROR: 未能提取航点!")
         rclpy.shutdown()
         return
 
-    nav = NavNode(recalled_wps, cmd_topic=cmd_topic, odom_topic=odom_topic)
+    nav = NavNode(return_wps, cmd_topic=cmd_topic, odom_topic=odom_topic)
     while rclpy.ok() and not nav.done:
         rclpy.spin_once(nav, timeout_sec=0.1)
 
@@ -410,9 +454,11 @@ def main():
     print(f"  Session 1 (探索):   {e_time:6.1f}s  {e_dist:6.2f}m  (随机探索)")
     print(f"  Session 2 (返航):   {n_time:6.1f}s  {n_dist:6.2f}m  (记忆导航)")
     if e_time > 0:
-        print(f"  时间节省:          {(1 - n_time / e_time) * 100:6.1f}%")
+        pct_time = (1 - n_time / e_time) * 100
+        print(f"  时间节省:          {pct_time:6.1f}%")
     if e_dist > 0:
-        print(f"  距离节省:          {(1 - n_dist / e_dist) * 100:6.1f}%")
+        pct_dist = (1 - n_dist / e_dist) * 100
+        print(f"  距离节省:          {pct_dist:6.1f}%")
     print(f"\n  证明: 走过的路不用再走第二次 — 记忆驱动直接返航")
     print(f"\n  DB: {DB_DIR}")
 

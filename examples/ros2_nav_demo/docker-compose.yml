@@ -5,8 +5,8 @@ services:
   gazebo-demo:
     platform: linux/amd64
     build:
-      context: .
-      dockerfile: Dockerfile.gazebo
+      context: ../..
+      dockerfile: examples/ros2_nav_demo/Dockerfile.gazebo
     environment:
       - TURTLEBOT3_MODEL=burger
       - DISPLAY=:99
@@ -14,7 +14,7 @@ services:
   webots-demo:
     platform: linux/amd64
     build:
-      context: .
-      dockerfile: Dockerfile.webots
+      context: ../..
+      dockerfile: examples/ros2_nav_demo/Dockerfile.webots
     environment:
       - DISPLAY=:99

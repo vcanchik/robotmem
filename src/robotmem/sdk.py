@@ -290,11 +290,15 @@ class RobotMemory:
             logger.warning("learn 去重检查异常: %s", e)
 
         # L2: embedding — embed_one_sync 返回 list[float]，转为 blob
+        # embedding 失败 → 降级为 None（宪法第 4 条：recall 增强可跳过）
         self._ensure_embedder()
         embedding = None
         if self._embedder and self._embedder.available:
-            emb_list = self._embedder.embed_one_sync(params.insight)
-            embedding = floats_to_blob(emb_list) if emb_list else None
+            try:
+                emb_list = self._embedder.embed_one_sync(params.insight)
+                embedding = floats_to_blob(emb_list) if emb_list else None
+            except Exception as e:
+                logger.warning("learn embedding 降级: %s", e)
 
         # L2: 原子写入
         memory_id = insert_memory(self._db.conn, {
@@ -796,6 +800,15 @@ class RobotMemory:
             return
         self._closed = True
         if self._owns_resources:
+            # 释放 embedder 资源
+            # - ONNX: 直接清除 _encoder 引用（~67MB 模型），GC 回收
+            # - Ollama: SDK 同步路径用 with httpx.Client() 按次创建/关闭，
+            #   不持有长连接。async _client 只在 MCP 路径创建，由 MCP lifespan 关闭。
+            # 不调用 embedder.close()（async），避免同步上下文中的事件循环冲突。
+            if self._embedder is not None:
+                if hasattr(self._embedder, '_encoder'):
+                    self._embedder._encoder = None
+                self._embedder = None
             self._db.close()
 
     def __enter__(self) -> RobotMemory:
