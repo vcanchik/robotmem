@@ -1,0 +1,19 @@
+FROM ros:humble
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-humble-turtlebot3-gazebo \
+    ros-humble-turtlebot3-teleop \
+    xvfb \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --no-cache-dir git+https://github.com/robotmem/robotmem.git
+
+ENV TURTLEBOT3_MODEL=burger
+
+COPY entrypoint-gazebo.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+COPY demo.py /demo.py
+
+ENTRYPOINT ["/entrypoint.sh"]

@@ -1,21 +1,45 @@
 #!/usr/bin/env python3
 """robotmem ROS 2 Demo — 记忆驱动导航对比
 
-Session 1: 反应式避障探索，robotmem 记住路线
-Session 2: recall 航点 → 直线导航
+Session 1: 反应式避障探索（前进 + 撞墙后退转向），robotmem 记住航点
+Session 2: recall 航点 → 反转 → 原路返航
 
-证明：走过的路不用再走第二次。
+证明：走过的路不用再走第二次 — 记忆驱动直接返航。
 
 环境要求：
 - ROS 2 Humble
-- Originbot 仿真（The Construct 平台）或任何有 /xxx/cmd_vel + /xxx/odom 的移动机器人
-- pip install robotmem
+- 有 cmd_vel (Twist) + odom (Odometry) 的移动机器人
+- pip install git+https://github.com/robotmem/robotmem.git
 
-运行：
+已测试平台：
+- Docker Gazebo headless — TurtleBot3 Burger (turtlebot3_world)
+- Docker Webots headless — TurtleBot3 Burger (webots_ros2_turtlebot)
+- The Construct (app.theconstruct.ai) — Originbot Racing Circuit
+
+运行方式：
+  # 方式 1: Docker（推荐）
+  cd examples/ros2_nav_demo
+  docker compose run gazebo-demo    # Gazebo 仿真
+  docker compose run webots-demo    # Webots 仿真
+
+  # 方式 2: 直接运行（需 ROS 2 环境）
+  pip3 install git+https://github.com/robotmem/robotmem.git
   source /opt/ros/humble/setup.bash
-  python3 demo.py              # 默认 25 秒探索
-  python3 demo.py 40           # 40 秒探索
-  python3 demo.py 25 --prefix /turtlebot3  # 自定义 topic 前缀
+  python3 demo.py                   # TurtleBot3 标准 topic
+  python3 demo.py 40                # 40 秒探索
+  python3 demo.py 25 --prefix /originbot_1  # The Construct Originbot
+
+已知限制：
+- Session 2 导航为航点跟踪 + 简单避障（后退转向），无全局路径规划
+- 狭窄赛道环境中，反转航点导航可能因墙壁阻挡而跳过部分航点
+- 建议在开阔环境或宽赛道中运行以获得最佳效果
+- 运行前建议重置仿真（Gazebo reload 或 ros2 service call /reset_simulation）
+
+robotmem API 使用：
+- learn(): 记录航点路线 + spatial context
+- save_perception(): 记录 odometry 轨迹数据
+- recall(): 检索航点用于返航导航
+- session(): 区分探索/返航两个 episode
 """
 import rclpy
 from rclpy.node import Node
@@ -256,12 +280,24 @@ def main():
     parser = argparse.ArgumentParser(description="robotmem ROS 2 导航记忆 Demo")
     parser.add_argument("duration", nargs="?", type=float, default=25.0,
                         help="探索时长（秒），默认 25")
-    parser.add_argument("--prefix", default="/originbot_1",
-                        help="Topic 前缀，如 /turtlebot3 或 /originbot_1")
+    parser.add_argument("--prefix", default="",
+                        help="Topic 前缀，如 /originbot_1（The Construct）或空（TurtleBot3 标准）")
     args = parser.parse_args()
 
-    cmd_topic = f"{args.prefix}/cmd_vel"
-    odom_topic = f"{args.prefix}/odom"
+    # prefix 校验：非空时必须以 / 开头
+    prefix = args.prefix
+    if prefix and not prefix.startswith("/"):
+        prefix = f"/{prefix}"
+
+    # duration 校验
+    if args.duration <= 0:
+        print(f"ERROR: 探索时长必须 > 0，当前值: {args.duration}")
+        return
+    if args.duration < 3:
+        print(f"WARNING: 探索时长 {args.duration}s 太短，可能采集不到航点（建议 >= 10s）")
+
+    cmd_topic = f"{prefix}/cmd_vel"
+    odom_topic = f"{prefix}/odom"
 
     # 清理旧数据
     if os.path.exists(DB_DIR):
@@ -287,6 +323,12 @@ def main():
     e_time = e_pos[-1][2] if e_pos else 0
     e_dist = path_len(e_pos)
     print(f"  航点: {len(wps)}, 距离: {e_dist:.2f}m, 用时: {e_time:.1f}s")
+
+    if not wps:
+        print("  ERROR: 探索未采集到航点（可能 odom 未发布或探索时间太短）")
+        exp.destroy_node()
+        rclpy.shutdown()
+        return
 
     # 存入 robotmem
     print("  存入 robotmem ...")

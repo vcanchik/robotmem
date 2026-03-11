@@ -1,0 +1,20 @@
+# robotmem ROS 2 Demo — Docker 一键运行
+# 使用 Xvfb 软件渲染，无需 GPU
+# ROS 2 + Gazebo/Webots 包仅支持 amd64，Apple Silicon 通过 Rosetta 模拟
+services:
+  gazebo-demo:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: Dockerfile.gazebo
+    environment:
+      - TURTLEBOT3_MODEL=burger
+      - DISPLAY=:99
+
+  webots-demo:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: Dockerfile.webots
+    environment:
+      - DISPLAY=:99

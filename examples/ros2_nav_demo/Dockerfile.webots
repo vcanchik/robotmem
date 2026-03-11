@@ -1,0 +1,16 @@
+FROM osrf/ros:humble-desktop
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-humble-webots-ros2 \
+    xvfb \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --no-cache-dir git+https://github.com/robotmem/robotmem.git
+
+COPY entrypoint-webots.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+COPY demo.py /demo.py
+
+ENTRYPOINT ["/entrypoint.sh"]

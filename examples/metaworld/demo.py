@@ -14,7 +14,7 @@
 
 运行:
   source .venv-pusht/bin/activate
-  PYTHONPATH=src python examples/metaworld/demo.py [--seed 42] [--episodes 5]
+  PYTHONPATH=src python examples/metaworld/demo.py [--seed 42] [--episodes 10]
 
 注: 这是 API 教程。严格实验请参考 experiment.py。
 """
@@ -68,10 +68,18 @@ def build_context(obs_initial, target_pos, total_reward, success,
     }
 
 
-def run_episode(env, policy, target_pos, learn_mem=None, session_id=None):
-    """执行单个 episode，返回 (success, total_reward)"""
-    obs, _ = env.reset()
+def run_episode(env, policy, learn_mem=None, session_id=None, pre_reset_obs=None):
+    """执行单个 episode，返回 (success, total_reward, obs_initial, target_pos)
+
+    单次 reset — obs_initial/target_pos/obj_pos 来自同一次初始化。
+    pre_reset_obs: 如果已经 reset 过，传入 obs 避免重复 reset。
+    """
+    if pre_reset_obs is not None:
+        obs = pre_reset_obs
+    else:
+        obs, _ = env.reset()
     obs_initial = obs.copy()
+    target_pos = env.unwrapped._target_pos.copy()
     total_reward = 0.0
     success = False
 
@@ -95,7 +103,7 @@ def run_episode(env, policy, target_pos, learn_mem=None, session_id=None):
             session_id=session_id,
         )
 
-    return success, total_reward
+    return success, total_reward, obs_initial, target_pos
 
 
 def run_phase(env_cls, tasks, episodes_per_instance, phase, mem=None, session_id=None):
@@ -109,25 +117,14 @@ def run_phase(env_cls, tasks, episodes_per_instance, phase, mem=None, session_id
 
         try:
             for ep in range(episodes_per_instance):
-                env.reset()
-                target = env.unwrapped._target_pos.copy()
-                obs_peek = env.reset()[0]
-                obj_pos = obs_peek[4:7]
+                pre_obs = None
 
-                if phase == "A":
-                    # 默认参数 + 噪声
-                    policy = MetaWorldPushPolicy(noise_scale=0.3)
+                if phase == "C":
+                    # Reset 一次，获取 obj_pos 用于 spatial recall
+                    obs_c, _ = env.reset()
+                    obj_pos = obs_c[4:7]
+                    pre_obs = obs_c  # 传给 run_episode 避免重复 reset
 
-                elif phase == "B":
-                    # 随机参数探索
-                    policy = MetaWorldPushPolicy(
-                        noise_scale=np.random.uniform(0.1, 0.5),
-                        approach_offset=np.random.uniform(0.02, 0.10),
-                        push_speed=np.random.uniform(4.0, 12.0),
-                    )
-
-                elif phase == "C":
-                    # 空间回忆 → 记忆驱动参数
                     recalled = mem.recall(
                         "successful push strategy",
                         n=RECALL_N,
@@ -142,11 +139,21 @@ def run_phase(env_cls, tasks, episodes_per_instance, phase, mem=None, session_id
                         recalled,
                         MEMORY_WEIGHT,
                     )
+                elif phase == "B":
+                    # 随机参数探索
+                    policy = MetaWorldPushPolicy(
+                        noise_scale=np.random.uniform(0.1, 0.5),
+                        approach_offset=np.random.uniform(0.02, 0.10),
+                        push_speed=np.random.uniform(4.0, 12.0),
+                    )
+                else:
+                    # Phase A: 默认参数
+                    policy = MetaWorldPushPolicy(noise_scale=0.3)
 
                 learn_mem = mem if phase == "B" else None
-                success, reward = run_episode(
-                    env, policy, target,
-                    learn_mem=learn_mem, session_id=session_id,
+                success, reward, _, _ = run_episode(
+                    env, policy, learn_mem=learn_mem,
+                    session_id=session_id, pre_reset_obs=pre_obs,
                 )
                 total_success += int(success)
                 total_episodes += 1
@@ -160,7 +167,7 @@ def run_phase(env_cls, tasks, episodes_per_instance, phase, mem=None, session_id
 def main():
     parser = argparse.ArgumentParser(description="Meta-World push-v3 空间记忆 Demo")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--episodes", type=int, default=5, help="每个 instance 的 episode 数")
+    parser.add_argument("--episodes", type=int, default=10, help="每个 instance 的 episode 数")
     parser.add_argument("--instances", type=int, default=20, help="使用的 task instance 数")
     args = parser.parse_args()
 
@@ -180,6 +187,7 @@ def main():
     env_cls = ml10.train_classes["push-v3"]
     all_tasks = [t for t in ml10.train_tasks if t.env_name == "push-v3"]
     tasks = all_tasks[: args.instances]
+    assert tasks, "未找到 push-v3 task instances，请检查 metaworld 版本"
 
     print("=" * 60)
     print("Meta-World push-v3 空间记忆 Demo")
