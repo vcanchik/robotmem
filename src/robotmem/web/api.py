@@ -365,8 +365,10 @@ def search_memories():
             results = results[:top_k]
 
         # context JSON 解析 — 提取 params/spatial/robot 便捷字段
+        # perception_data 可能是大型 blob，搜索列表不返回（详情端点返回）
         for r in results:
             extract_context_fields(r)
+            r.pop("perception_data", None)
 
         return jsonify({
             "results": results,

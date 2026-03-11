@@ -14,6 +14,7 @@ from robotmem.search import (
     _match_context_filter,
     _compute_spatial_distance,
     recall,
+    recall_sync,
     _MISSING,
 )
 
@@ -321,7 +322,10 @@ class TestRecall:
                     assert result.mode == "vec_only"
 
     @pytest.mark.asyncio
-    async def test_embedder_not_available(self):
+    async def test_embedder_not_available_raises(self):
+        """embedder 不可用时 raise EmbeddingError（宪法 #4: 坏了就喊）"""
+        from robotmem.exceptions import EmbeddingError
+
         db = self._make_db_mock()
         fts_data = [{"id": 1, "content": "test", "confidence": 0.9, "context": "{}"}]
 
@@ -330,9 +334,23 @@ class TestRecall:
         embedder.unavailable_reason = "not installed"
 
         with patch("robotmem.search.fts_search_memories", return_value=fts_data):
-            with patch("robotmem.search.batch_touch_memories"):
-                result = await recall("test", db, embedder=embedder, collection="test")
-                assert result.mode == "bm25_only"
+            with pytest.raises(EmbeddingError, match="Embedder 不可用"):
+                await recall("test", db, embedder=embedder, collection="test")
+
+    def test_embedder_not_available_raises_sync(self):
+        """recall_sync: embedder 不可用时 raise EmbeddingError"""
+        from robotmem.exceptions import EmbeddingError
+
+        db = self._make_db_mock()
+        fts_data = [{"id": 1, "content": "test", "confidence": 0.9, "context": "{}"}]
+
+        embedder = MagicMock()
+        embedder.available = False
+        embedder.unavailable_reason = "not installed"
+
+        with patch("robotmem.search.fts_search_memories", return_value=fts_data):
+            with pytest.raises(EmbeddingError, match="Embedder 不可用"):
+                recall_sync("test", db, embedder=embedder, collection="test")
 
     @pytest.mark.asyncio
     async def test_bm25_exception(self):

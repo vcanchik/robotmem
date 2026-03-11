@@ -94,6 +94,7 @@ class TestFtsSearchMemories:
             assert "content" in r
             assert "type" in r
             assert "confidence" in r
+            assert "perception_data" in r
             assert "bm25_score" in r
 
     def test_special_chars_cleaned(self, search_conn):

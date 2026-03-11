@@ -25,8 +25,9 @@ def fts_search_memories(
 ) -> list[dict]:
     """BM25 全文搜索 memories — recall 用
 
-    返回完整字段: id, content, type, perception_type, session_id,
-    category, confidence, context, scope_files, created_at, bm25_score
+    返回完整字段: id, content, human_summary, type, perception_type,
+    session_id, category, confidence, context, scope_files,
+    scope_entities, created_at, perception_data, bm25_score
 
     三层防御：
     - L1 事前：query 非空 + FTS5 语法清理
@@ -56,7 +57,7 @@ def fts_search_memories(
             SELECT m.id, m.content, m.human_summary, m.type, m.perception_type,
                    m.session_id, m.category, m.confidence,
                    m.context, m.scope_files, m.scope_entities,
-                   m.created_at,
+                   m.created_at, m.perception_data,
                    bm25(memories_fts) as bm25_score
             FROM memories_fts
             JOIN memories m ON m.id = memories_fts.rowid
@@ -74,7 +75,8 @@ def fts_search_memories(
                 "session_id": r[5], "category": r[6],
                 "confidence": r[7], "context": r[8],
                 "scope_files": r[9], "scope_entities": r[10],
-                "created_at": r[11], "bm25_score": r[12],
+                "created_at": r[11], "perception_data": r[12],
+                "bm25_score": r[13],
             }
             for r in rows
         ]
@@ -92,8 +94,9 @@ def vec_search_memories(
 ) -> list[dict]:
     """向量 KNN 搜索 memories — recall 用
 
-    返回完整字段: id, content, type, perception_type, session_id,
-    category, confidence, context, scope_files, created_at, distance
+    返回完整字段: id, content, human_summary, type, perception_type,
+    session_id, category, confidence, context, scope_files,
+    scope_entities, created_at, perception_data, distance
 
     三层防御：
     - L1 事前：embedding 非空 + vec_loaded 检查
@@ -113,7 +116,7 @@ def vec_search_memories(
             SELECT m.id, m.content, m.human_summary, m.type, m.perception_type,
                    m.session_id, m.category, m.confidence,
                    m.context, m.scope_files, m.scope_entities,
-                   m.created_at,
+                   m.created_at, m.perception_data,
                    v.distance
             FROM memories_vec v
             JOIN memories m ON m.id = v.rowid
@@ -130,7 +133,8 @@ def vec_search_memories(
                 "session_id": r[5], "category": r[6],
                 "confidence": r[7], "context": r[8],
                 "scope_files": r[9], "scope_entities": r[10],
-                "created_at": r[11], "distance": r[12],
+                "created_at": r[11], "perception_data": r[12],
+                "distance": r[13],
             }
             for r in rows
         ]

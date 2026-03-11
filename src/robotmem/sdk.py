@@ -36,7 +36,7 @@ from .config import Config
 from .db_cog import CogDatabase
 from .dedup import check_duplicate
 from .embed import Embedder, create_embedder
-from .exceptions import DatabaseError, ValidationError
+from .exceptions import DatabaseError, EmbeddingError, ValidationError
 from .ops.memories import (
     apply_time_decay,
     consolidate_session as do_consolidate,
@@ -161,17 +161,33 @@ class RobotMemory:
             raise DatabaseError("RobotMemory 已关闭")
 
     def _ensure_embedder(self) -> None:
-        """首次使用时检测 embedder 可用性（sync，不阻塞构造函数）"""
+        """首次使用时检测 embedder 可用性（sync，不阻塞构造函数）
+
+        宪法第 4 条「坏了就喊」：用户指定了 embed_backend，
+        初始化失败必须报错，禁止静默降级为 BM25-only。
+
+        Raises:
+            EmbeddingError: embedder 初始化失败
+        """
         if self._embedder is None:
             return
         if self._embedder.available:
             return
-        # 首次调用：尝试初始化 ONNX 模型
+        # 首次调用：尝试初始化模型
         if hasattr(self._embedder, "_ensure_encoder"):
             try:
                 self._embedder._ensure_encoder()
             except Exception as e:
-                logger.warning("SDK embedder 初始化失败: %s，降级为 BM25-only", e)
+                raise EmbeddingError(
+                    f"Embedder 初始化失败: {e}。"
+                    f"如需纯 BM25 模式，请显式指定 embed_backend='none'"
+                ) from e
+        # 初始化后仍不可用 → 报错（堵住逃逸路径）
+        if not self._embedder.available:
+            raise EmbeddingError(
+                f"Embedder 不可用: {self._embedder.unavailable_reason}。"
+                f"如需纯 BM25 模式，请显式指定 embed_backend='none'"
+            )
 
     # ── 核心 API ──
 
@@ -273,15 +289,12 @@ class RobotMemory:
         except Exception as e:
             logger.warning("learn 去重检查异常: %s", e)
 
-        # L2: embedding（降级为 None）— embed_one_sync 返回 list[float]，转为 blob
+        # L2: embedding — embed_one_sync 返回 list[float]，转为 blob
         self._ensure_embedder()
         embedding = None
         if self._embedder and self._embedder.available:
-            try:
-                emb_list = self._embedder.embed_one_sync(params.insight)
-                embedding = floats_to_blob(emb_list) if emb_list else None
-            except Exception as e:
-                logger.warning("learn embedding 降级: %s", e)
+            emb_list = self._embedder.embed_one_sync(params.insight)
+            embedding = floats_to_blob(emb_list) if emb_list else None
 
         # L2: 原子写入
         memory_id = insert_memory(self._db.conn, {
@@ -572,17 +585,14 @@ class RobotMemory:
             confidence=confidence,
         )
 
-        # L2: 重建 embedding（降级跳过）
+        # L2: 重建 embedding
         self._ensure_embedder()
         if self._embedder and self._embedder.available:
-            try:
-                new_emb = self._embedder.embed_one_sync(params.new_content)
-                update_memory_embedding(
-                    self._db.conn, params.memory_id, new_emb,
-                    vec_loaded=self._db.vec_loaded,
-                )
-            except Exception as e:
-                logger.warning("update embedding 重建失败: %s", e)
+            new_emb = self._embedder.embed_one_sync(params.new_content)
+            update_memory_embedding(
+                self._db.conn, params.memory_id, new_emb,
+                vec_loaded=self._db.vec_loaded,
+            )
 
         # L2: 重建 tags
         try:

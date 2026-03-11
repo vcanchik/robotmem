@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 from .db_cog import CogDatabase
 from .embed import Embedder
+from .exceptions import EmbeddingError
 from .ops.memories import batch_touch_memories
 from .ops.search import fts_search_memories, vec_search_memories
 
@@ -300,7 +301,10 @@ async def recall(
         except Exception as e:
             logger.warning("recall Vec 搜索异常: %s", e)
     elif embedder:
-        logger.debug("recall: embedder 不可用 (%s)，降级为 BM25-only", embedder.unavailable_reason)
+        raise EmbeddingError(
+            f"Embedder 不可用: {embedder.unavailable_reason}。"
+            f"如需纯 BM25 模式，请显式指定 embed_backend='none'"
+        )
 
     return _recall_impl(
         query, db, bm25_results, vec_results, collection,
@@ -350,7 +354,10 @@ def recall_sync(
         except Exception as e:
             logger.warning("recall_sync Vec 搜索异常: %s", e)
     elif embedder:
-        logger.debug("recall_sync: embedder 不可用 (%s)，降级为 BM25-only", embedder.unavailable_reason)
+        raise EmbeddingError(
+            f"Embedder 不可用: {embedder.unavailable_reason}。"
+            f"如需纯 BM25 模式，请显式指定 embed_backend='none'"
+        )
 
     return _recall_impl(
         query, db, bm25_results, vec_results, collection,

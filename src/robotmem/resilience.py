@@ -159,11 +159,16 @@ def safe_db_transaction(
 
 def mcp_error_boundary(func: Callable) -> Callable:
     """MCP tool 错误边界装饰器 — 异常不传播到客户端"""
+    from .exceptions import EmbeddingError, ValidationError
 
     @wraps(func)
     async def wrapper(*args, **kwargs):
         try:
             return await func(*args, **kwargs)
+        except (ValidationError, EmbeddingError) as e:
+            # 配置/校验错误：透传诊断信息，客户端可据此修正
+            logger.error("MCP tool %s 配置错误: %s", func.__name__, e)
+            return {"error": str(e)}
         except sqlite3.DatabaseError as e:
             logger.error("MCP tool %s DB 错误: %s", func.__name__, e)
             return {"error": "数据库异常，请查看服务端日志"}
