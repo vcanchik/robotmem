@@ -21,7 +21,7 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
-import math, time, json, os, sys, shutil, argparse
+import math, time, json, os, sys, shutil, argparse, random
 
 from robotmem.sdk import RobotMemory
 
@@ -31,7 +31,11 @@ COLLECTION = "ros_nav_demo"
 
 
 class ExploreNode(Node):
-    """Session 1: 前进 + 碰墙转弯，记录航点"""
+    """Session 1: 前进 + 撞墙后退转向，记录航点"""
+
+    FORWARD = 0
+    BACKUP = 1
+    TURN = 2
 
     def __init__(self, duration=25.0, cmd_topic="/originbot_1/cmd_vel",
                  odom_topic="/originbot_1/odom"):
@@ -45,16 +49,18 @@ class ExploreNode(Node):
         self.positions = []
         self.waypoints = []
         self.pos = None
-        self.last_vx = 0.0
+        self.prev_pos = None
         self.stuck_count = 0
         self.last_wp_t = 0
         self.done = False
+        self.state = self.FORWARD
+        self.state_t = time.time()
+        self.turn_dir = 1.0
 
     def _odom_cb(self, msg):
         p = msg.pose.pose.position
         self.pos = (p.x, p.y)
         self.positions.append((p.x, p.y, time.time() - self.t0))
-        self.last_vx = msg.twist.twist.linear.x
 
         now = time.time()
         if now - self.last_wp_t > 1.5:
@@ -75,20 +81,40 @@ class ExploreNode(Node):
             return
 
         cmd = Twist()
-        if abs(self.last_vx) < 0.02:
-            self.stuck_count += 1
-        else:
-            self.stuck_count = 0
+        now = time.time()
 
-        if self.stuck_count > 10:
-            cmd.angular.z = 0.6
-            cmd.linear.x = 0.0
-            if self.stuck_count > 25:
-                self.stuck_count = 0
-        else:
-            cmd.linear.x = 0.25
+        if self.state == self.FORWARD:
+            cmd.linear.x = 0.3
             cmd.angular.z = 0.0
+            # 位置变化检测卡住（比速度更可靠）
+            if self.prev_pos and self.pos:
+                d = math.hypot(self.pos[0] - self.prev_pos[0],
+                               self.pos[1] - self.prev_pos[1])
+                if d < 0.01:
+                    self.stuck_count += 1
+                else:
+                    self.stuck_count = 0
+            if self.stuck_count > 8:
+                self.state = self.BACKUP
+                self.state_t = now
+                self.turn_dir = random.choice([-1.0, 1.0])
+                self.stuck_count = 0
 
+        elif self.state == self.BACKUP:
+            cmd.linear.x = -0.2
+            cmd.angular.z = 0.0
+            if now - self.state_t > 1.5:
+                self.state = self.TURN
+                self.state_t = now
+
+        elif self.state == self.TURN:
+            cmd.linear.x = 0.0
+            cmd.angular.z = self.turn_dir * 1.2
+            if now - self.state_t > random.uniform(1.0, 2.5):
+                self.state = self.FORWARD
+                self.state_t = now
+
+        self.prev_pos = self.pos
         self.pub.publish(cmd)
 
 
