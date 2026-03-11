@@ -8,7 +8,7 @@ build/
 
 # Environment
 .env
-.venv/
+.venv*/
 venv/
 
 # IDE
