@@ -40,6 +40,9 @@ class Config:
     embed_api: str = "ollama"  # "ollama" | "openai_compat"
     fastembed_cache_dir: str = ""  # 空 = 系统默认
 
+    # ── Web UI ──
+    web_port: int = 7878
+
     # ── 搜索 ──
     top_k: int = 10
     rrf_k: int = 60

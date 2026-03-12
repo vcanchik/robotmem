@@ -30,25 +30,26 @@ const API = {
 
 // ── Tab 切换 ──
 
+function switchTab(target) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+    var el = document.getElementById('tab-' + target);
+    if (el) el.classList.add('active');
+
+    var tabBtn = document.querySelector('.tab[data-tab="' + target + '"]');
+    if (tabBtn) tabBtn.classList.add('active');
+
+    if (target === 'dashboard') loadDashboard();
+    else if (target === 'memories') loadMemories();
+    else if (target === 'sessions') loadSessions();
+    else if (target === 'doctor') loadDoctor();
+}
+
 function initTabs() {
-    const tabs = document.querySelectorAll('.tab');
-    const contents = document.querySelectorAll('.tab-content');
-
-    tabs.forEach(tab => {
-        tab.addEventListener('click', () => {
-            const target = tab.dataset.tab;
-
-            tabs.forEach(t => t.classList.remove('active'));
-            contents.forEach(c => c.classList.remove('active'));
-
-            tab.classList.add('active');
-            document.getElementById('tab-' + target).classList.add('active');
-
-            // 切换时加载数据
-            if (target === 'dashboard') loadDashboard();
-            else if (target === 'memories') loadMemories();
-            else if (target === 'sessions') loadSessions();
-            else if (target === 'doctor') loadDoctor();
+    document.querySelectorAll('.tab[data-tab]').forEach(function(tab) {
+        tab.addEventListener('click', function() {
+            switchTab(tab.dataset.tab);
         });
     });
 }

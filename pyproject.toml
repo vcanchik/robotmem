@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "robotmem"
-version = "0.1.0"
+version = "0.1.1"
 description = "Robot Memory - Persistent memory system for robotic AI agents"
 requires-python = ">=3.10"
 readme = "README.md"

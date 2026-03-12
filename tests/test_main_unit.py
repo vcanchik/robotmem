@@ -9,7 +9,7 @@ import pytest
 
 def _parse_web_args(args: list[str]) -> tuple[int, str]:
     """复制 __main__.py 的参数解析逻辑用于测试"""
-    port = 6889
+    port = 7878
     host = "127.0.0.1"
 
     i = 1
@@ -36,7 +36,7 @@ class TestWebArgsParsing:
 
     def test_default_port_and_host(self):
         port, host = _parse_web_args(["web"])
-        assert port == 6889
+        assert port == 7878
         assert host == "127.0.0.1"
 
     def test_custom_port(self):
@@ -79,7 +79,7 @@ class TestWebArgsParsing:
     def test_port_at_end_without_value(self):
         """--port 在末尾没有值 → 跳过"""
         port, host = _parse_web_args(["web", "--port"])
-        assert port == 6889  # 没有值，保持默认
+        assert port == 7878  # 没有值，保持默认
 
     def test_host_at_end_without_value(self):
         """--host 在末尾没有值 → 跳过"""

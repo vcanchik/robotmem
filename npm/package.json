@@ -1,6 +1,6 @@
 {
   "name": "robotmem",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Robot Memory - Persistent memory for robotic AI agents. MCP Server.",
   "bin": {
     "robotmem": "./bin/robotmem.js"

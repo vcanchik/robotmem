@@ -1,7 +1,10 @@
-"""robotmem ROS 2 Node — SDK 薄包装
+# Copyright 2026 gladego
+#
+# Licensed under the MIT License.
 
-7 Service + 1 Topic（perception 高频流）+ Ready 信号
-三层防御核心在 SDK，ROS 层只做 @ros_error_boundary 薄壳。
+"""robotmem ROS 2 Node — SDK 薄包装.
+
+7 Service + 1 Topic (perception stream) + Ready signal.
 """
 
 from __future__ import annotations
@@ -13,7 +16,7 @@ import time
 from functools import wraps
 
 import rclpy
-from rclpy.callback_group import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import (
@@ -73,16 +76,16 @@ def ros_error_boundary(func):
         except ValidationError as e:
             response.success = False
             response.error = f"参数校验失败: {e}"
-            self.get_logger().warning("L1 %s: %s", func.__name__, e)
+            self.get_logger().warning(f"L1 {func.__name__}: {e}")
         except DatabaseError as e:
             response.success = False
             response.error = f"数据库错误: {e}"
-            self.get_logger().error("L2 %s: %s", func.__name__, e)
+            self.get_logger().error(f"L2 {func.__name__}: {e}")
             self._publish_ready(False)
         except Exception as e:
             response.success = False
             response.error = f"内部错误: {e}"
-            self.get_logger().error("L3 %s: %s", func.__name__, e)
+            self.get_logger().error(f"L3 {func.__name__}: {e}")
         return response
     return wrapper
 
@@ -228,7 +231,7 @@ class RobotMemNode(Node):
 
         # L1: embed_backend 白名单
         if embed_backend not in ('onnx', 'ollama', 'none'):
-            self.get_logger().warning("embed_backend=%r 非法，使用 onnx", embed_backend)
+            self.get_logger().warning(f"embed_backend={embed_backend!r} 非法，使用 onnx")
             embed_backend = 'onnx'
 
         # 缓存构造期参数，避免后续访问 SDK 私有属性
@@ -241,7 +244,7 @@ class RobotMemNode(Node):
                 db_path=db_path, collection=self._collection, embed_backend=embed_backend,
             )
         except Exception as e:
-            self.get_logger().fatal("robotmem 启动失败: %s", e)
+            self.get_logger().fatal(f"robotmem 启动失败: {e}")
             raise SystemExit(1)
 
         try:
@@ -249,7 +252,7 @@ class RobotMemNode(Node):
                 db_path=db_path, collection=self._collection, embed_backend='none',
             )
         except Exception as e:
-            self.get_logger().fatal("perception SDK 初始化失败: %s", e)
+            self.get_logger().fatal(f"perception SDK 初始化失败: {e}")
             self._mem.close()
             raise SystemExit(1)
 
@@ -273,7 +276,7 @@ class RobotMemNode(Node):
         # ── Perception Topic ──
         qos = QOS_PERCEPTION_RELIABLE if perception_qos == 'reliable' else QOS_PERCEPTION_BEST_EFFORT
         if perception_qos not in ('reliable', 'best_effort'):
-            self.get_logger().warning("perception_qos=%r 非法，使用 reliable", perception_qos)
+            self.get_logger().warning(f"perception_qos={perception_qos!r} 非法，使用 reliable")
             qos = QOS_PERCEPTION_RELIABLE
 
         self._perc_buffer = PerceptionBuffer(self._perception_mem, batch_size, flush_interval)
@@ -291,8 +294,7 @@ class RobotMemNode(Node):
         self._ready_pub = self.create_publisher(NodeStatus, 'ready', QOS_READY)
         self._publish_ready(True)
         self.get_logger().info(
-            "robotmem node ready: db=%s embed=%s collection=%s",
-            self._db_path_str, self._embed_backend, self._collection,
+            f"robotmem node ready: db={self._db_path_str} embed={self._embed_backend} collection={self._collection}"
         )
 
     # ── 辅助方法 ──
@@ -305,7 +307,7 @@ class RobotMemNode(Node):
                 (collection,),
             ).fetchone()[0]
         except Exception as e:
-            self.get_logger().warning("查询 active 记忆数失败: %s", e)
+            self.get_logger().warning(f"查询 active 记忆数失败: {e}")
             return 0
 
     # ── Service 回调 ──
@@ -440,14 +442,13 @@ class RobotMemNode(Node):
         try:
             self._publish_ready(False)
         except Exception as e:
-            self.get_logger().warning("shutdown 发布 ready=false 失败: %s", e)
+            self.get_logger().warning(f"shutdown 发布 ready=false 失败: {e}")
         self._perc_buffer.flush()
         self._perception_mem.close()
         self._mem.close()
         s = self._perc_buffer.get_stats()
         self.get_logger().info(
-            "robotmem shutdown: received=%d written=%d dropped=%d failed=%d",
-            s["received"], s["written"], s["dropped"], s["failed"],
+            f"robotmem shutdown: received={s['received']} written={s['written']} dropped={s['dropped']} failed={s['failed']}"
         )
         super().destroy_node()
 

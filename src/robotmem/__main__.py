@@ -14,7 +14,9 @@ def main():
 
     if args and args[0] == "web":
         # Web UI 模式
-        port = 6889
+        from .config import load_config
+        _cfg = load_config()
+        port = _cfg.web_port
         host = "127.0.0.1"
 
         i = 1
