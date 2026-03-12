@@ -52,5 +52,9 @@ examples/**/results/
 PUBLISH.md
 scripts/send_outreach.py
 
+# Outreach（本地管理页面，不上传）
+src/robotmem/outreach.py
+src/robotmem/templates/outreach.html
+
 # Rust
 crate/target/

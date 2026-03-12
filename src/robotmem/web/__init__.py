@@ -54,6 +54,10 @@ def create_app(config: Config | None = None) -> Flask:
     def index():
         return render_template("index.html")
 
+    @app.route("/outreach")
+    def outreach_page():
+        return render_template("outreach.html")
+
     # 关闭时清理
     @app.teardown_appcontext
     def _close_db(exc):

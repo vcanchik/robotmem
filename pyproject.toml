@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "robotmem"
-version = "0.1.1"
+version = "0.1.2"
 description = "Robot Memory - Persistent memory system for robotic AI agents"
 requires-python = ">=3.10"
 readme = "README.md"
@@ -36,6 +36,8 @@ dependencies = [
 web = ["flask>=3.0"]
 ollama = ["httpx>=0.27"]
 cjk = ["jieba"]
+sb3 = ["stable-baselines3>=2.0"]
+gym = ["gymnasium>=0.26"]
 dev = ["pytest>=7.0", "pytest-asyncio>=0.21", "flask>=3.0"]
 
 [project.entry-points."lerobot.callbacks"]

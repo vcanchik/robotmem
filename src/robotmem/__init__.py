@@ -14,7 +14,7 @@ Python API:
         print(m["content"], m["_rrf_score"])
 """
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 from .api import (
     end_session,

@@ -586,3 +586,22 @@ def session_memories(external_id: str):
     except Exception as e:
         logger.exception("session_memories 失败")
         return jsonify({"error": "查询失败"}), 500
+
+
+# ── GET /api/outreach ──
+
+@api_bp.route("/outreach")
+def outreach():
+    """Outreach 链接数据"""
+    from robotmem.outreach import get_outreach_data
+    return jsonify({"groups": get_outreach_data()})
+
+
+# ── GET /api/outreach/check ──
+
+@api_bp.route("/outreach/check", methods=["GET", "POST"])
+def outreach_check():
+    """检查所有 Outreach URL 可达性"""
+    from robotmem.outreach import check_all_urls
+    results = check_all_urls(timeout=5)
+    return jsonify({"results": results})
