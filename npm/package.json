@@ -1,5 +1,5 @@
 {
-  "name": "robotmem",
+  "name": "@muscular/robotmem",
   "version": "0.1.2",
   "description": "Robot Memory - Persistent memory for robotic AI agents. MCP Server.",
   "bin": {
@@ -7,12 +7,21 @@
   },
   "keywords": ["robot", "memory", "mcp", "ai", "robotics", "experience-replay"],
   "license": "Apache-2.0",
-  "author": "robotmem",
+  "author": "muscular",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/robotmem/robotmem.git"
+    "url": "git+https://github.com/vcanchik/robotmem.git",
+    "directory": "npm"
+  },
+  "homepage": "https://github.com/vcanchik/robotmem/tree/main/npm#readme",
+  "bugs": {
+    "url": "https://github.com/vcanchik/robotmem/issues"
   },
   "engines": { "node": ">=16" },
   "os": ["darwin", "linux", "win32"],
-  "files": ["bin/", "package.json", "README.md"]
+  "files": ["bin/", "package.json", "README.md"],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
 }

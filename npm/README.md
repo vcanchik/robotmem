@@ -1,5 +1,14 @@
 [中文版](README_zh.md)
 
+Fork note: this npm package is published by `muscular` as `@muscular/robotmem`, while the upstream project lives at `https://github.com/robotmem/robotmem`. The upstream Apache-2.0 license is preserved in this fork.
+
+## npm Install
+
+```bash
+npm install -g @muscular/robotmem
+robotmem
+```
+
 # robotmem — Let Robots Learn from Experience
 
 > Your robot ran 1000 experiments, starting from scratch every time. robotmem stores episode experiences — parameters, trajectories, outcomes — and retrieves the most relevant ones to guide future decisions.

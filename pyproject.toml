@@ -10,6 +10,7 @@ requires-python = ">=3.10"
 readme = "README.md"
 license = "Apache-2.0"
 authors = [{name = "robotmem"}]
+maintainers = [{name = "vcanchik"}]
 keywords = [
     "robot", "memory", "mcp", "experience-replay", "episodic-memory",
     "robotics", "spatial-search", "sqlite", "onnx", "offline-first",
@@ -44,9 +45,10 @@ dev = ["pytest>=7.0", "pytest-asyncio>=0.21", "flask>=3.0"]
 robotmem = "robotmem.lerobot:RobotMemCallback"
 
 [project.urls]
-Homepage = "https://robotmem.com"
-Repository = "https://github.com/robotmem/robotmem"
-Issues = "https://github.com/robotmem/robotmem/issues"
+# Fork metadata for the vcanchik-maintained mirror.
+Homepage = "https://github.com/vcanchik/robotmem#readme"
+Repository = "https://github.com/vcanchik/robotmem"
+Issues = "https://github.com/vcanchik/robotmem/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
