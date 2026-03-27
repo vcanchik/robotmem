@@ -187,11 +187,9 @@ def _recall_impl(
             continue
         if session_id and m.get("session_id") != session_id:
             continue
-        candidates.append(m)
-
-    # context JSON 解析（在过滤前提取，使 context_filter 可用）
-    for m in candidates:
+        # 只对通过基础过滤的结果解析 context，避免额外一次全量遍历。
         extract_context_fields(m)
+        candidates.append(m)
 
     # P1: 结构化过滤（#17）
     if context_filter:

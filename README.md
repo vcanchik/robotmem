@@ -1,7 +1,3 @@
-[中文版](README_zh.md)
-
-Fork note: this repository is maintained at `https://github.com/vcanchik/robotmem` and is based on the upstream project `https://github.com/robotmem/robotmem`. The upstream Apache-2.0 license is preserved in this fork.
-
 # robotmem — Let Robots Learn from Experience
 
 > Your robot ran 1000 experiments, starting from scratch every time. robotmem stores episode experiences — parameters, trajectories, outcomes — and retrieves the most relevant ones to guide future decisions.
@@ -17,6 +13,13 @@ Fork note: this repository is maintained at `https://github.com/vcanchik/robotme
 ```bash
 pip install robotmem
 ```
+
+```bash
+npm install -g @muscular/robotmem
+robotmem
+```
+
+The npm package is a thin wrapper around the Python CLI. It requires Python 3.10+ and installs `robotmem` on first run if it is not already available in the selected interpreter.
 
 ```python
 from robotmem import learn, recall, save_perception, start_session, end_session

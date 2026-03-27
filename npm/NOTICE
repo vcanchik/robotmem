@@ -1,0 +1,7 @@
+This repository is a fork of https://github.com/robotmem/robotmem.
+
+Upstream project: robotmem
+Upstream license: Apache License 2.0
+
+Fork maintainer: vcanchik
+Fork-specific changes in this repository currently focus on repository ownership and npm packaging metadata.

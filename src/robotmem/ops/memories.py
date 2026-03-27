@@ -324,14 +324,13 @@ def batch_touch_memories(conn: sqlite3.Connection, memory_ids: list[int]) -> Non
         return
 
     def _do(c: sqlite3.Connection) -> None:
-        for mid in valid:
-            c.execute("""
-                UPDATE memories
-                SET access_count=access_count+1,
-                    return_count=return_count+1,
-                    last_accessed=strftime('%Y-%m-%dT%H:%M:%f','now')
-                WHERE id=?
-            """, [mid])
+        c.executemany("""
+            UPDATE memories
+            SET access_count=access_count+1,
+                return_count=return_count+1,
+                last_accessed=strftime('%Y-%m-%dT%H:%M:%f','now')
+            WHERE id=?
+        """, ((mid,) for mid in valid))
 
     safe_db_transaction(conn, _do)
 

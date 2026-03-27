@@ -80,11 +80,10 @@ class CogDatabase:
     def _ensure_tag_meta(self) -> None:
         """同步 tag_tree.py → tag_meta 表（幂等，原子事务）"""
         def _sync(c: sqlite3.Connection) -> None:
-            for tag, parent, display_name in TAG_META_TREE:
-                c.execute(
-                    "INSERT OR IGNORE INTO tag_meta (tag, parent, display_name) VALUES (?, ?, ?)",
-                    (tag, parent, display_name),
-                )
+            c.executemany(
+                "INSERT OR IGNORE INTO tag_meta (tag, parent, display_name) VALUES (?, ?, ?)",
+                TAG_META_TREE,
+            )
 
         ok, _ = safe_db_transaction(self.conn, _sync)
         if not ok:

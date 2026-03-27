@@ -6,15 +6,31 @@ const os = require('os');
 
 const args = process.argv.slice(2);
 const isWin = os.platform() === 'win32';
+const installSpec = process.env.ROBOTMEM_PIP_SPEC || 'robotmem';
+const pythonLaunchers = isWin
+  ? [
+      { command: 'py', args: ['-3'] },
+      { command: 'py', args: [] },
+      { command: 'python', args: [] },
+      { command: 'python3', args: [] },
+    ]
+  : [
+      { command: 'python3', args: [] },
+      { command: 'python', args: [] },
+    ];
 
 // --- helpers ---
 
 function run(cmd, cmdArgs, opts) {
-  return spawnSync(cmd, cmdArgs, { stdio: 'inherit', shell: isWin, ...opts });
+  return spawnSync(cmd, cmdArgs, { stdio: 'inherit', shell: false, ...opts });
+}
+
+function runQuiet(cmd, cmdArgs, opts) {
+  return spawnSync(cmd, cmdArgs, { stdio: 'pipe', shell: false, ...opts });
 }
 
 function hasCmd(cmd) {
-  const r = spawnSync(isWin ? 'where' : 'which', [cmd], { stdio: 'pipe', shell: isWin });
+  const r = runQuiet(isWin ? 'where' : 'which', [cmd]);
   return r.status === 0;
 }
 
@@ -23,61 +39,82 @@ function fail(msg) {
   process.exit(1);
 }
 
-// --- main ---
-
-// 1. Already installed? Forward directly.
-for (const py of ['python3', 'python']) {
-  if (!hasCmd(py)) continue;
-  const check = spawnSync(py, ['-c', 'import robotmem'], { stdio: 'pipe', shell: isWin });
-  if (check.status === 0) {
-    const r = run(py, ['-m', 'robotmem', ...args]);
-    process.exit(r.status || 0);
+function findPython() {
+  if (process.env.ROBOTMEM_PYTHON) {
+    return { command: process.env.ROBOTMEM_PYTHON, args: [] };
   }
+
+  for (const launcher of pythonLaunchers) {
+    if (!hasCmd(launcher.command)) continue;
+    const check = runQuiet(launcher.command, [...launcher.args, '--version']);
+    if (check.status === 0) return launcher;
+  }
+
+  return null;
 }
 
-// 2. Not installed. Try auto-install.
-process.stderr.write('robotmem not found, attempting auto-install...\n');
+function canImportRobotmem(python) {
+  const check = runQuiet(python.command, [...python.args, '-c', 'import robotmem']);
+  return check.status === 0;
+}
 
-if (hasCmd('pipx')) {
-  process.stderr.write('→ pipx install robotmem\n');
-  const install = run('pipx', ['install', 'robotmem']);
-  if (install.status !== 0) {
-    fail('❌ pipx install failed. Run manually: pipx install robotmem');
-  }
-} else if (hasCmd('pip3')) {
-  process.stderr.write('→ pip3 install robotmem\n');
-  const install = run('pip3', ['install', 'robotmem']);
-  if (install.status !== 0) {
-    fail('❌ pip3 install failed. Run manually: pip3 install robotmem');
-  }
-} else if (hasCmd('pip')) {
-  process.stderr.write('→ pip install robotmem\n');
-  const install = run('pip', ['install', 'robotmem']);
-  if (install.status !== 0) {
-    fail('❌ pip install failed. Run manually: pip install robotmem');
-  }
-} else {
+function hasPip(python) {
+  const check = runQuiet(python.command, [...python.args, '-m', 'pip', '--version']);
+  return check.status === 0;
+}
+
+function runRobotmem(python) {
+  return run(python.command, [...python.args, '-m', 'robotmem', ...args]);
+}
+
+// --- main ---
+
+const python = findPython();
+
+if (!python) {
   fail(
-    '❌ No pipx or pip found. Install Python first:\n' +
-    '   macOS:   brew install python\n' +
-    '   Ubuntu:  sudo apt install python3-pip\n' +
-    '   Windows: https://python.org/downloads\n\n' +
-    '   Then run: pipx install robotmem'
+    'No supported Python interpreter found in PATH.\n' +
+    'Install Python 3.10+ and ensure `python`, `python3`, or `py` is available.'
   );
 }
 
+// 1. Already installed? Forward directly.
+if (canImportRobotmem(python)) {
+  const r = runRobotmem(python);
+  process.exit(r.status || 0);
+}
+
+// 2. Not installed. Try auto-install.
+process.stderr.write(`robotmem not found, installing ${installSpec} for the current user...\n`);
+
+if (!hasPip(python)) {
+  fail(
+    'pip is not available for the selected Python interpreter.\n' +
+    `Run manually: ${python.command} ${python.args.join(' ')} -m ensurepip --upgrade`
+  );
+}
+
+const install = run(python.command, [
+  ...python.args,
+  '-m',
+  'pip',
+  'install',
+  '--user',
+  '--upgrade',
+  installSpec,
+]);
+
+if (install.status !== 0) {
+  fail(`Automatic install failed. Run manually: ${python.command} ${python.args.join(' ')} -m pip install --user --upgrade ${installSpec}`);
+}
+
 // 3. Run the command after installation.
-for (const py of ['python3', 'python']) {
-  if (!hasCmd(py)) continue;
-  const check = spawnSync(py, ['-c', 'import robotmem'], { stdio: 'pipe', shell: isWin });
-  if (check.status === 0) {
-    const r = run(py, ['-m', 'robotmem', ...args]);
-    process.exit(r.status || 0);
-  }
+if (canImportRobotmem(python)) {
+  const r = runRobotmem(python);
+  process.exit(r.status || 0);
 }
 
 fail(
-  '❌ Installed but robotmem not in PATH.\n' +
-  '   Try: pipx ensurepath && source ~/.bashrc\n' +
-  '   Then re-run the command.'
+  'Installed successfully, but `python -m robotmem` still failed to import.\n' +
+  'Check Python user-site settings or rerun with ROBOTMEM_PYTHON pointing to the intended interpreter.'
 );
