@@ -22,9 +22,15 @@ from .tags import _normalize_tag
 logger = logging.getLogger(__name__)
 
 # perception_type 白名单
-VALID_PERCEPTION_TYPES = frozenset({
-    "visual", "tactile", "auditory", "proprioceptive", "procedural",
-})
+VALID_PERCEPTION_TYPES = frozenset(
+    {
+        "visual",
+        "tactile",
+        "auditory",
+        "proprioceptive",
+        "procedural",
+    }
+)
 
 
 def insert_memory(
@@ -75,7 +81,8 @@ def insert_memory(
         if perception_type not in VALID_PERCEPTION_TYPES:
             logger.error(
                 "insert_memory: 非法 perception_type=%r，白名单=%s",
-                perception_type, VALID_PERCEPTION_TYPES,
+                perception_type,
+                VALID_PERCEPTION_TYPES,
             )
             return None
 
@@ -107,7 +114,8 @@ def insert_memory(
         # human_summary: 用户传入 > content 前 200 字
         human_summary = memory.get("human_summary") or content[:200]
 
-        cursor = c.execute("""
+        cursor = c.execute(
+            """
             INSERT INTO memories
                 (session_id, collection, type, content, human_summary, context,
                  perception_type, perception_data, perception_metadata, concept,
@@ -119,39 +127,51 @@ def insert_memory(
                     ?, ?, ?, ?, ?, 'active',
                     ?, ?,
                     ?, ?, ?)
-        """, [
-            memory.get("session_id"),
-            collection,
-            mem_type,
-            content,
-            human_summary,
-            memory.get("context"),
-            perception_type,
-            memory.get("perception_data"),
-            memory.get("perception_metadata"),
-            memory.get("concept"),
-            category,
-            memory.get("confidence", 0.9),
-            decay_rate,
-            memory.get("source", "tool"),
-            memory.get("scope", "project"),
-            content_hash,
-            memory.get("media_hash"),
-            memory.get("embedding"),
-            memory.get("scope_files", "[]"),
-            memory.get("scope_entities", "[]"),
-        ])
+        """,
+            [
+                memory.get("session_id"),
+                collection,
+                mem_type,
+                content,
+                human_summary,
+                memory.get("context"),
+                perception_type,
+                memory.get("perception_data"),
+                memory.get("perception_metadata"),
+                memory.get("concept"),
+                category,
+                memory.get("confidence", 0.9),
+                decay_rate,
+                memory.get("source", "tool"),
+                memory.get("scope", "project"),
+                content_hash,
+                memory.get("media_hash"),
+                memory.get("embedding"),
+                memory.get("scope_files", "[]"),
+                memory.get("scope_entities", "[]"),
+            ],
+        )
         memory_id = cursor.lastrowid
 
         # FTS5 手动同步（jieba 分词 CJK 文本）
         try:
             fts_content = tokenize_for_fts5(content)
-            fts_summary = tokenize_for_fts5(human_summary) if human_summary else ""
+            # 避免重复分词：如果 human_summary 就是 content（短文本时）
+            fts_summary = (
+                fts_content
+                if human_summary == content
+                else (tokenize_for_fts5(human_summary) if human_summary else "")
+            )
             c.execute(
                 "INSERT INTO memories_fts(rowid, content, human_summary, scope_files, scope_entities) "
                 "VALUES (?, ?, ?, ?, ?)",
-                (memory_id, fts_content, fts_summary,
-                 memory.get("scope_files", "[]"), memory.get("scope_entities", "[]")),
+                (
+                    memory_id,
+                    fts_content,
+                    fts_summary,
+                    memory.get("scope_files", "[]"),
+                    memory.get("scope_entities", "[]"),
+                ),
             )
         except Exception as e:
             logger.warning("FTS5 索引失败 (memory_id=%d): %s", memory_id, e)
@@ -187,12 +207,17 @@ def insert_memory(
     if ok and result:
         logger.debug(
             "insert_memory: id=%d type=%s category=%s collection=%s",
-            result, mem_type, category, collection,
+            result,
+            mem_type,
+            category,
+            collection,
         )
     else:
         logger.warning(
             "insert_memory 失败: type=%s collection=%s content=%.50s",
-            mem_type, collection, content,
+            mem_type,
+            collection,
+            content,
         )
 
     return result if ok else None
@@ -228,9 +253,17 @@ def update_memory(conn: sqlite3.Connection, memory_id: int, **updates) -> None:
         return
 
     allowed = {
-        "content", "human_summary", "category", "confidence", "decay_rate",
-        "scope_files", "scope_entities", "scope",
-        "status", "context", "perception_metadata",
+        "content",
+        "human_summary",
+        "category",
+        "confidence",
+        "decay_rate",
+        "scope_files",
+        "scope_entities",
+        "scope",
+        "status",
+        "context",
+        "perception_metadata",
     }
     sets = ["updated_at=strftime('%Y-%m-%dT%H:%M:%f','now')"]
     values: list = []
@@ -256,10 +289,12 @@ def update_memory(conn: sqlite3.Connection, memory_id: int, **updates) -> None:
             try:
                 row = c.execute(
                     "SELECT content, human_summary, scope_files, scope_entities "
-                    "FROM memories WHERE id=?", [memory_id],
+                    "FROM memories WHERE id=?",
+                    [memory_id],
                 ).fetchone()
                 if row:
                     from ..db import SUPPORTS_CONTENTLESS_DELETE
+
                     # 删除旧 FTS5 行
                     if SUPPORTS_CONTENTLESS_DELETE:
                         c.execute("DELETE FROM memories_fts WHERE rowid=?", [memory_id])
@@ -271,10 +306,13 @@ def update_memory(conn: sqlite3.Connection, memory_id: int, **updates) -> None:
                     c.execute(
                         "INSERT INTO memories_fts(rowid, content, human_summary, scope_files, scope_entities) "
                         "VALUES (?, ?, ?, ?, ?)",
-                        (memory_id,
-                         tokenize_for_fts5(row[0] or ""),
-                         tokenize_for_fts5(row[1] or ""),
-                         row[2] or "[]", row[3] or "[]"),
+                        (
+                            memory_id,
+                            tokenize_for_fts5(row[0] or ""),
+                            tokenize_for_fts5(row[1] or ""),
+                            row[2] or "[]",
+                            row[3] or "[]",
+                        ),
                     )
             except Exception as e:
                 logger.warning("FTS5 索引更新失败 (memory_id=%d): %s", memory_id, e)
@@ -284,7 +322,9 @@ def update_memory(conn: sqlite3.Connection, memory_id: int, **updates) -> None:
 
 @validate_args(memory_id=positive_int)
 def invalidate_memory(
-    conn: sqlite3.Connection, memory_id: int, reason: str = "",
+    conn: sqlite3.Connection,
+    memory_id: int,
+    reason: str = "",
 ) -> None:
     """将记忆标记为失效（forget 工具）
 
@@ -294,25 +334,33 @@ def invalidate_memory(
     - L3 事后：logger 记录
     """
 
-    safe_db_write(conn, """
+    safe_db_write(
+        conn,
+        """
         UPDATE memories
         SET status='invalidated', invalidated_reason=?,
             invalidated_at=strftime('%Y-%m-%dT%H:%M:%f','now'),
             updated_at=strftime('%Y-%m-%dT%H:%M:%f','now')
         WHERE id=?
-    """, [reason, memory_id])
+    """,
+        [reason, memory_id],
+    )
 
 
 @validate_args(memory_id=positive_int)
 def touch_memory(conn: sqlite3.Connection, memory_id: int) -> None:
     """更新访问计数和最后访问时间 — recall 命中时调用"""
-    safe_db_write(conn, """
+    safe_db_write(
+        conn,
+        """
         UPDATE memories
         SET access_count=access_count+1,
             return_count=return_count+1,
             last_accessed=strftime('%Y-%m-%dT%H:%M:%f','now')
         WHERE id=?
-    """, [memory_id])
+    """,
+        [memory_id],
+    )
 
 
 def batch_touch_memories(conn: sqlite3.Connection, memory_ids: list[int]) -> None:
@@ -324,19 +372,24 @@ def batch_touch_memories(conn: sqlite3.Connection, memory_ids: list[int]) -> Non
         return
 
     def _do(c: sqlite3.Connection) -> None:
-        c.executemany("""
+        c.executemany(
+            """
             UPDATE memories
             SET access_count=access_count+1,
                 return_count=return_count+1,
                 last_accessed=strftime('%Y-%m-%dT%H:%M:%f','now')
             WHERE id=?
-        """, ((mid,) for mid in valid))
+        """,
+            ((mid,) for mid in valid),
+        )
 
     safe_db_transaction(conn, _do)
 
 
 def get_session_memories(
-    conn: sqlite3.Connection, session_id: str, collection: str,
+    conn: sqlite3.Connection,
+    session_id: str,
+    collection: str,
 ) -> list[dict]:
     """获取指定会话中所有记忆，按创建时间排序 — end_session 摘要用"""
     if not session_id:
@@ -344,11 +397,14 @@ def get_session_memories(
     try:
         cur = conn.cursor()
         cur.row_factory = sqlite3.Row
-        rows = cur.execute("""
+        rows = cur.execute(
+            """
             SELECT * FROM memories
             WHERE session_id=? AND collection=?
             ORDER BY created_at
-        """, [session_id, collection]).fetchall()
+        """,
+            [session_id, collection],
+        ).fetchall()
         return [dict(r) for r in rows]
     except Exception as e:
         logger.warning("get_session_memories 失败: %s", e)
@@ -356,21 +412,26 @@ def get_session_memories(
 
 
 def get_memories_missing_embedding(
-    conn: sqlite3.Connection, collection: str, limit: int = 50,
+    conn: sqlite3.Connection,
+    collection: str,
+    limit: int = 50,
 ) -> list[tuple[int, str]]:
     """获取缺失 embedding 的记忆 — (id, content)
 
     供后台 embedding 任务使用。
     """
     try:
-        rows = conn.execute("""
+        rows = conn.execute(
+            """
             SELECT id, content FROM memories
             WHERE collection=?
               AND embedding IS NULL
               AND status='active'
             ORDER BY created_at DESC
             LIMIT ?
-        """, [collection, limit]).fetchall()
+        """,
+            [collection, limit],
+        ).fetchall()
         return [(r[0], r[1]) for r in rows]
     except Exception as e:
         logger.warning("get_memories_missing_embedding 失败: %s", e)
@@ -428,7 +489,8 @@ def apply_time_decay(
         min_interval_days = 1.0
 
     def _do(c: sqlite3.Connection) -> int:
-        c.execute("""
+        c.execute(
+            """
             UPDATE memories
             SET confidence = confidence * power(1 - decay_rate,
                     julianday('now') - julianday(COALESCE(last_accessed, created_at))),
@@ -436,7 +498,9 @@ def apply_time_decay(
             WHERE status = 'active'
               AND julianday('now') - julianday(COALESCE(last_accessed, created_at)) > ?
               AND confidence > 0.05
-        """, [min_interval_days])
+        """,
+            [min_interval_days],
+        )
         return c.execute("SELECT changes()").fetchone()[0]
 
     ok, count = safe_db_transaction(conn, _do)
@@ -471,8 +535,10 @@ def consolidate_session(
          "compression_ratio": float, "avg_similarity": float}
     """
     empty_result = {
-        "merged_groups": 0, "superseded_count": 0,
-        "compression_ratio": 0.0, "avg_similarity": 0.0,
+        "merged_groups": 0,
+        "superseded_count": 0,
+        "compression_ratio": 0.0,
+        "avg_similarity": 0.0,
     }
 
     if not session_id:
@@ -482,14 +548,17 @@ def consolidate_session(
     try:
         cur = conn.cursor()
         cur.row_factory = sqlite3.Row
-        rows = cur.execute("""
+        rows = cur.execute(
+            """
             SELECT id, content, category, confidence, access_count, created_at
             FROM memories
             WHERE session_id = ? AND collection = ? AND status = 'active'
               AND category NOT IN ('constraint', 'postmortem', 'gotcha')
               AND confidence < 0.95
               AND perception_type IS NULL
-        """, [session_id, collection]).fetchall()
+        """,
+            [session_id, collection],
+        ).fetchall()
     except sqlite3.Error as e:
         logger.warning("consolidate_session 查询失败: %s", e)
         return empty_result
@@ -560,13 +629,16 @@ def consolidate_session(
             )
             representative = sorted_cluster[0]
             for m in sorted_cluster[1:]:
-                c.execute("""
+                c.execute(
+                    """
                     UPDATE memories
                     SET status = 'superseded',
                         superseded_by = ?,
                         updated_at = strftime('%Y-%m-%dT%H:%M:%f','now')
                     WHERE id = ?
-                """, [representative["id"], m["id"]])
+                """,
+                    [representative["id"], m["id"]],
+                )
                 count += 1
         return count
 
@@ -575,16 +647,29 @@ def consolidate_session(
         superseded_count = result or 0
 
     total_original = len(memories)
-    compression_ratio = round(
-        superseded_count / total_original, 2,
-    ) if total_original > 0 else 0.0
-    avg_sim = round(
-        sum(all_similarities) / len(all_similarities), 3,
-    ) if all_similarities else 0.0
+    compression_ratio = (
+        round(
+            superseded_count / total_original,
+            2,
+        )
+        if total_original > 0
+        else 0.0
+    )
+    avg_sim = (
+        round(
+            sum(all_similarities) / len(all_similarities),
+            3,
+        )
+        if all_similarities
+        else 0.0
+    )
 
     logger.info(
         "consolidate_session: session=%s, merged=%d groups, superseded=%d, ratio=%.2f",
-        session_id, len(all_clusters), superseded_count, compression_ratio,
+        session_id,
+        len(all_clusters),
+        superseded_count,
+        compression_ratio,
     )
 
     return {

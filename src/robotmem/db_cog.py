@@ -42,7 +42,12 @@ class CogDatabase:
 
     @property
     def conn(self) -> sqlite3.Connection:
-        """获取数据库连接（lazy init + 线程安全）"""
+        """获取数据库连接（lazy init + 线程安全）
+
+        快速路径：连接已建立时跳过锁，减少热点路径竞争。
+        """
+        if self._conn is not None and not self._closed:
+            return self._conn
         with self._conn_lock:
             if self._closed:
                 raise RuntimeError("CogDatabase 已关闭")
@@ -74,11 +79,14 @@ class CogDatabase:
 
         logger.info(
             "CogDatabase 已连接: %s (vec=%s, dim=%d)",
-            self._db_path, self._vec_loaded, self._dim,
+            self._db_path,
+            self._vec_loaded,
+            self._dim,
         )
 
     def _ensure_tag_meta(self) -> None:
         """同步 tag_tree.py → tag_meta 表（幂等，原子事务）"""
+
         def _sync(c: sqlite3.Connection) -> None:
             c.executemany(
                 "INSERT OR IGNORE INTO tag_meta (tag, parent, display_name) VALUES (?, ?, ?)",
@@ -97,7 +105,10 @@ class CogDatabase:
     # ── 核心查询方法（dedup.py / conflict.py / search.py 依赖） ──
 
     def memory_exists(
-        self, assertion: str, session_id: str | None, collection: str,
+        self,
+        assertion: str,
+        session_id: str | None,
+        collection: str,
     ) -> bool:
         """精确匹配检查 — dedup Layer 1"""
         if session_id:
@@ -115,7 +126,10 @@ class CogDatabase:
         return row is not None
 
     def fts_search_memories(
-        self, query: str, collection: str, limit: int = 10,
+        self,
+        query: str,
+        collection: str,
+        limit: int = 10,
     ) -> list[dict]:
         """FTS5 全文搜索 — dedup Layer 2"""
         from .db import tokenize_for_fts5
@@ -124,7 +138,8 @@ class CogDatabase:
         if not fts_query:
             return []
         try:
-            rows = self.conn.execute("""
+            rows = self.conn.execute(
+                """
                 SELECT m.id, m.content, m.session_id, m.category, m.confidence
                 FROM memories_fts f
                 JOIN memories m ON m.id = f.rowid
@@ -133,25 +148,37 @@ class CogDatabase:
                   AND m.status = 'active'
                 ORDER BY rank
                 LIMIT ?
-            """, (fts_query, collection, limit)).fetchall()
+            """,
+                (fts_query, collection, limit),
+            ).fetchall()
         except sqlite3.OperationalError as e:
             logger.debug("FTS5 搜索失败: %s", e)
             return []
         return [
-            {"id": r[0], "content": r[1], "assertion": r[1],
-             "session_id": r[2], "category": r[3], "confidence": r[4]}
+            {
+                "id": r[0],
+                "content": r[1],
+                "assertion": r[1],
+                "session_id": r[2],
+                "category": r[3],
+                "confidence": r[4],
+            }
             for r in rows
         ]
 
     def vec_search_memories(
-        self, query_embedding: list[float], collection: str, limit: int = 10,
+        self,
+        query_embedding: list[float],
+        collection: str,
+        limit: int = 10,
     ) -> list[dict]:
         """Vec0 向量搜索 — dedup Layer 3"""
         if not self._vec_loaded:
             return []
         blob = floats_to_blob(query_embedding)
         try:
-            rows = self.conn.execute("""
+            rows = self.conn.execute(
+                """
                 SELECT v.rowid, v.distance, m.content, m.session_id,
                        m.category, m.confidence
                 FROM memories_vec v
@@ -160,21 +187,35 @@ class CogDatabase:
                   AND m.collection = ?
                   AND m.status = 'active'
                   AND k = ?
-            """, (blob, collection, limit)).fetchall()
+            """,
+                (blob, collection, limit),
+            ).fetchall()
         except sqlite3.OperationalError as e:
             logger.debug("Vec 搜索失败: %s", e)
             return []
         return [
-            {"id": r[0], "distance": r[1], "content": r[2], "assertion": r[2],
-             "session_id": r[3], "category": r[4], "confidence": r[5]}
+            {
+                "id": r[0],
+                "distance": r[1],
+                "content": r[2],
+                "assertion": r[2],
+                "session_id": r[3],
+                "category": r[4],
+                "confidence": r[5],
+            }
             for r in rows
         ]
 
     def supersede_memory(
-        self, old_id: int, new_id: int, reason: str = "",
+        self,
+        old_id: int,
+        new_id: int,
+        reason: str = "",
     ) -> None:
         """标记旧记忆被新记忆替代 — dedup / conflict"""
-        safe_db_write(self.conn, """
+        safe_db_write(
+            self.conn,
+            """
             UPDATE memories
             SET status = 'superseded',
                 superseded_by = ?,
@@ -182,7 +223,9 @@ class CogDatabase:
                 invalidated_at = strftime('%Y-%m-%dT%H:%M:%f','now'),
                 updated_at = strftime('%Y-%m-%dT%H:%M:%f','now')
             WHERE id = ?
-        """, [new_id, reason, old_id])
+        """,
+            [new_id, reason, old_id],
+        )
 
     # ── 便利方法 ──
 

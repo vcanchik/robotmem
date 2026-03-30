@@ -18,19 +18,22 @@ Lazy 初始化 DB + Embedder 单例，首次调用时自动连接。
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 import threading
 import uuid
+
+from .db import floats_to_blob
 
 logger = logging.getLogger(__name__)
 
 # ── 单例管理 ──
 
 _lock = threading.Lock()
-_db = None          # CogDatabase
-_embedder = None    # Embedder
-_config = None      # Config
+_db = None  # CogDatabase
+_embedder = None  # Embedder
+_config = None  # Config
 
 
 def _ensure_init():
@@ -64,7 +67,6 @@ def _run_async(coro):
         # 没有运行中的 event loop — 直接用 asyncio.run
         return asyncio.run(coro)
     # 已有 event loop（Jupyter 等场景）— 在新线程中运行
-    import concurrent.futures
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         return pool.submit(asyncio.run, coro).result()
 
@@ -77,6 +79,7 @@ def _resolve_collection(collection: str | None) -> str:
 
 
 # ── Tool 1: save_perception ──
+
 
 def save_perception(
     description: str,
@@ -108,26 +111,29 @@ def save_perception(
     if _embedder.available:
         try:
             emb_list = _run_async(_embedder.embed_one(description))
-            from .db import floats_to_blob
             embedding = floats_to_blob(emb_list)
         except Exception as e:
             logger.warning("save_perception embedding 失败: %s", e)
 
-    memory_id = insert_memory(_db.conn, {
-        "session_id": session_id,
-        "collection": coll,
-        "type": "perception",
-        "content": description,
-        "human_summary": description[:200],
-        "perception_type": perception_type,
-        "perception_data": data,
-        "perception_metadata": metadata,
-        "category": "observation",
-        "confidence": 0.9,
-        "source": "api",
-        "scope": "project",
-        "embedding": embedding,
-    }, vec_loaded=_db.vec_loaded)
+    memory_id = insert_memory(
+        _db.conn,
+        {
+            "session_id": session_id,
+            "collection": coll,
+            "type": "perception",
+            "content": description,
+            "human_summary": description[:200],
+            "perception_type": perception_type,
+            "perception_data": data,
+            "perception_metadata": metadata,
+            "category": "observation",
+            "confidence": 0.9,
+            "source": "api",
+            "scope": "project",
+            "embedding": embedding,
+        },
+        vec_loaded=_db.vec_loaded,
+    )
 
     if not memory_id:
         return {"error": "写入失败（可能重复）"}
@@ -141,6 +147,7 @@ def save_perception(
 
 
 # ── Tool 2: recall ──
+
 
 def recall(
     query: str,
@@ -171,17 +178,19 @@ def recall(
     coll = _resolve_collection(collection)
     emb = _embedder if _embedder.available else None
 
-    result = _run_async(do_recall(
-        query=query,
-        db=_db,
-        embedder=emb,
-        collection=coll,
-        top_k=n,
-        min_confidence=min_confidence,
-        session_id=session_id,
-        context_filter=context_filter,
-        spatial_sort=spatial_sort,
-    ))
+    result = _run_async(
+        do_recall(
+            query=query,
+            db=_db,
+            embedder=emb,
+            collection=coll,
+            top_k=n,
+            min_confidence=min_confidence,
+            session_id=session_id,
+            context_filter=context_filter,
+            spatial_sort=spatial_sort,
+        )
+    )
 
     return {
         "memories": result.memories,
@@ -192,6 +201,7 @@ def recall(
 
 
 # ── Tool 3: learn ──
+
 
 def learn(
     insight: str,
@@ -255,13 +265,17 @@ def learn(
     # 去重
     try:
         dedup_result = check_duplicate(
-            insight, coll, session_id,
-            _db, _embedder if _embedder.available else None,
+            insight,
+            coll,
+            session_id,
+            _db,
+            _embedder if _embedder.available else None,
         )
         if dedup_result.is_dup:
             existing_id = (
                 dedup_result.similar_facts[0].get("id")
-                if dedup_result.similar_facts else None
+                if dedup_result.similar_facts
+                else None
             )
             return {
                 "status": "duplicate",
@@ -277,28 +291,31 @@ def learn(
     if _embedder.available:
         try:
             emb_list = _run_async(_embedder.embed_one(insight))
-            from .db import floats_to_blob
             embedding = floats_to_blob(emb_list)
         except Exception as e:
             logger.warning("learn embedding 失败: %s", e)
 
-    memory_id = insert_memory(_db.conn, {
-        "session_id": session_id,
-        "collection": coll,
-        "type": "fact",
-        "content": insight,
-        "human_summary": insight[:200],
-        "context": ctx_json if isinstance(ctx_json, str) else json.dumps(ctx_json),
-        "category": category,
-        "confidence": confidence,
-        "source": "api",
-        "scope": "project",
-        "scope_files": json.dumps(scope_files),
-        "scope_entities": json.dumps(scope_entities),
-        "embedding": embedding,
-        "tags": inferred_tags,
-        "tag_source": "auto",
-    }, vec_loaded=_db.vec_loaded)
+    memory_id = insert_memory(
+        _db.conn,
+        {
+            "session_id": session_id,
+            "collection": coll,
+            "type": "fact",
+            "content": insight,
+            "human_summary": insight[:200],
+            "context": ctx_json if isinstance(ctx_json, str) else json.dumps(ctx_json),
+            "category": category,
+            "confidence": confidence,
+            "source": "api",
+            "scope": "project",
+            "scope_files": json.dumps(scope_files),
+            "scope_entities": json.dumps(scope_entities),
+            "embedding": embedding,
+            "tags": inferred_tags,
+            "tag_source": "auto",
+        },
+        vec_loaded=_db.vec_loaded,
+    )
 
     if not memory_id:
         return {"error": "写入失败（可能重复）"}
@@ -316,6 +333,7 @@ def learn(
 
 
 # ── Tool 4: forget ──
+
 
 def forget(memory_id: int, reason: str) -> dict:
     """删除错误记忆（软删除）
@@ -348,6 +366,7 @@ def forget(memory_id: int, reason: str) -> dict:
 
 # ── Tool 5: update ──
 
+
 def update(memory_id: int, new_content: str, context: str = "") -> dict:
     """修正记忆内容
 
@@ -378,6 +397,7 @@ def update(memory_id: int, new_content: str, context: str = "") -> dict:
     # 重新分类
     try:
         from .auto_classify import classify_category, estimate_confidence
+
         category = classify_category(new_content)
         confidence = estimate_confidence(new_content, context)
     except Exception:
@@ -385,7 +405,8 @@ def update(memory_id: int, new_content: str, context: str = "") -> dict:
         confidence = mem.get("confidence", 0.9)
 
     update_memory(
-        _db.conn, memory_id,
+        _db.conn,
+        memory_id,
         content=new_content,
         category=category,
         confidence=confidence,
@@ -396,7 +417,10 @@ def update(memory_id: int, new_content: str, context: str = "") -> dict:
         try:
             new_emb = _run_async(_embedder.embed_one(new_content))
             update_memory_embedding(
-                _db.conn, memory_id, new_emb, vec_loaded=_db.vec_loaded,
+                _db.conn,
+                memory_id,
+                new_emb,
+                vec_loaded=_db.vec_loaded,
             )
         except Exception as e:
             logger.warning("update embedding 重建失败: %s", e)
@@ -404,6 +428,7 @@ def update(memory_id: int, new_content: str, context: str = "") -> dict:
     # 重建 tags
     try:
         from .auto_classify import classify_tags
+
         inferred_tags = classify_tags(new_content, context)
         if inferred_tags:
             add_tags(_db.conn, memory_id, inferred_tags, source="auto")
@@ -423,6 +448,7 @@ def update(memory_id: int, new_content: str, context: str = "") -> dict:
 
 
 # ── Tool 6: start_session ──
+
 
 def start_session(
     collection: str | None = None,
@@ -466,6 +492,7 @@ def start_session(
 
 
 # ── Tool 7: end_session ──
+
 
 def end_session(
     session_id: str,

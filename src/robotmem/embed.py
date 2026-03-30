@@ -55,6 +55,7 @@ def create_embedder(config) -> Embedder:
 
     if backend == "onnx":
         from .embed_onnx import FastEmbedEmbedder
+
         return FastEmbedEmbedder(
             model=getattr(config, "onnx_model", "BAAI/bge-small-en-v1.5"),
             dim=getattr(config, "onnx_dim", 384),
@@ -77,17 +78,21 @@ class OllamaEmbedder:
     _TOTAL_TIMEOUT = 30.0
     _CONCURRENT_BATCHES = 4
 
-    def __init__(self, model: str, ollama_url: str, dim: int = 768, api: str = "ollama"):
+    def __init__(
+        self, model: str, ollama_url: str, dim: int = 768, api: str = "ollama"
+    ):
         self._model = model
         self._ollama_url = ollama_url.rstrip("/")
         self._dim = dim
         self._api = api
         self._client = None
         self._client_lock = asyncio.Lock()
+        self._sync_client = None
         self._available: bool | None = None
         self._unavailable_reason: str = ""
 
         from .resilience import ServiceCooldown
+
         self._cooldown = ServiceCooldown(f"ollama_embed_{model}")
 
     async def _get_client(self):
@@ -97,11 +102,16 @@ class OllamaEmbedder:
         async with self._client_lock:
             if self._client is None:
                 import httpx
+
                 self._client = httpx.AsyncClient(
                     base_url=self._ollama_url,
-                    timeout=httpx.Timeout(connect=3.0, read=10.0, write=10.0, pool=10.0),
+                    timeout=httpx.Timeout(
+                        connect=3.0, read=10.0, write=10.0, pool=10.0
+                    ),
                     transport=httpx.AsyncHTTPTransport(
-                        limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+                        limits=httpx.Limits(
+                            max_connections=10, max_keepalive_connections=5
+                        ),
                     ),
                 )
             return self._client
@@ -132,7 +142,8 @@ class OllamaEmbedder:
 
         try:
             return await asyncio.wait_for(
-                self._embed_one_inner(text), timeout=self._TOTAL_TIMEOUT,
+                self._embed_one_inner(text),
+                timeout=self._TOTAL_TIMEOUT,
             )
         except asyncio.TimeoutError:
             self._set_unavailable(f"embedding 总超时（{self._TOTAL_TIMEOUT}s）")
@@ -145,14 +156,21 @@ class OllamaEmbedder:
         for attempt in range(self._MAX_RETRIES):
             client = await self._get_client()
             try:
-                resp = await client.post(self._embed_endpoint(), json=self._embed_payload(text))
+                resp = await client.post(
+                    self._embed_endpoint(), json=self._embed_payload(text)
+                )
                 resp.raise_for_status()
                 return self._parse_embeddings(resp.json())[0]
             except (httpx.ConnectError, httpx.TimeoutException) as e:
                 last_exc = e
-                wait = self._BACKOFF_BASE * (2 ** attempt)
-                logger.warning("embed_one 失败 (%d/%d): %s，%.1fs 后重试",
-                               attempt + 1, self._MAX_RETRIES, e, wait)
+                wait = self._BACKOFF_BASE * (2**attempt)
+                logger.warning(
+                    "embed_one 失败 (%d/%d): %s，%.1fs 后重试",
+                    attempt + 1,
+                    self._MAX_RETRIES,
+                    e,
+                    wait,
+                )
                 await asyncio.sleep(wait)
             except httpx.HTTPStatusError:
                 raise
@@ -162,7 +180,9 @@ class OllamaEmbedder:
             raise last_exc
         raise RuntimeError("重试循环结束但无异常")
 
-    async def _embed_single_batch(self, batch: list[str], batch_num: int) -> list[list[float]]:
+    async def _embed_single_batch(
+        self, batch: list[str], batch_num: int
+    ) -> list[list[float]]:
         import httpx
 
         try:
@@ -174,21 +194,30 @@ class OllamaEmbedder:
             self._set_unavailable(f"embedding 总超时（{self._TOTAL_TIMEOUT}s）")
             raise httpx.ReadTimeout(f"embed_batch 第 {batch_num} 批总超时")
 
-    async def _embed_single_batch_inner(self, batch: list[str], batch_num: int) -> list[list[float]]:
+    async def _embed_single_batch_inner(
+        self, batch: list[str], batch_num: int
+    ) -> list[list[float]]:
         import httpx
 
         last_exc: Exception | None = None
         for attempt in range(self._MAX_RETRIES):
             client = await self._get_client()
             try:
-                resp = await client.post(self._embed_endpoint(), json=self._embed_payload(batch))
+                resp = await client.post(
+                    self._embed_endpoint(), json=self._embed_payload(batch)
+                )
                 resp.raise_for_status()
                 return self._parse_embeddings(resp.json())
             except (httpx.ConnectError, httpx.TimeoutException) as e:
                 last_exc = e
-                wait = self._BACKOFF_BASE * (2 ** attempt)
-                logger.warning("embed_batch 第 %d 批失败 (%d/%d): %s",
-                               batch_num, attempt + 1, self._MAX_RETRIES, e)
+                wait = self._BACKOFF_BASE * (2**attempt)
+                logger.warning(
+                    "embed_batch 第 %d 批失败 (%d/%d): %s",
+                    batch_num,
+                    attempt + 1,
+                    self._MAX_RETRIES,
+                    e,
+                )
                 await asyncio.sleep(wait)
             except httpx.HTTPStatusError:
                 raise
@@ -198,12 +227,14 @@ class OllamaEmbedder:
             raise last_exc
         raise RuntimeError("重试循环结束但无异常")
 
-    async def embed_batch(self, texts: list[str], batch_size: int = 32) -> list[list[float] | None]:
+    async def embed_batch(
+        self, texts: list[str], batch_size: int = 32
+    ) -> list[list[float] | None]:
         """批量文本 → 向量列表，失败位置填 None"""
         if not texts:
             return []
 
-        batches = [texts[i:i + batch_size] for i in range(0, len(texts), batch_size)]
+        batches = [texts[i : i + batch_size] for i in range(0, len(texts), batch_size)]
 
         if len(batches) == 1:
             try:
@@ -234,6 +265,18 @@ class OllamaEmbedder:
 
     # ── sync 桥接（SDK 用）──
 
+    def _get_sync_client(self):
+        """获取或懒创建同步 httpx 客户端"""
+        if self._sync_client is not None:
+            return self._sync_client
+        import httpx
+
+        self._sync_client = httpx.Client(
+            base_url=self._ollama_url,
+            timeout=httpx.Timeout(connect=3.0, read=10.0, write=10.0, pool=10.0),
+        )
+        return self._sync_client
+
     def embed_one_sync(self, text: str) -> list[float]:
         """单条文本 → 向量（同步，SDK 用）
 
@@ -241,29 +284,31 @@ class OllamaEmbedder:
         """
         import httpx
 
-        with httpx.Client(
-            base_url=self._ollama_url,
-            timeout=httpx.Timeout(connect=3.0, read=10.0, write=10.0, pool=10.0),
-        ) as client:
-            last_exc: Exception | None = None
-            for attempt in range(self._MAX_RETRIES):
-                try:
-                    resp = client.post(self._embed_endpoint(), json=self._embed_payload(text))
-                    resp.raise_for_status()
-                    return self._parse_embeddings(resp.json())[0]
-                except (httpx.ConnectError, httpx.TimeoutException) as e:
-                    last_exc = e
-                    import time
-                    wait = self._BACKOFF_BASE * (2 ** attempt)
-                    logger.warning("embed_one_sync 失败 (%d/%d): %s", attempt + 1, self._MAX_RETRIES, e)
-                    time.sleep(wait)
-                except httpx.HTTPStatusError:
-                    raise
-                except (KeyError, IndexError) as e:
-                    raise ValueError(f"embed 响应格式错误: {e}") from e
-            if last_exc:
-                raise last_exc
-            raise RuntimeError("重试循环结束但无异常")
+        client = self._get_sync_client()
+        last_exc: Exception | None = None
+        for attempt in range(self._MAX_RETRIES):
+            try:
+                resp = client.post(
+                    self._embed_endpoint(), json=self._embed_payload(text)
+                )
+                resp.raise_for_status()
+                return self._parse_embeddings(resp.json())[0]
+            except (httpx.ConnectError, httpx.TimeoutException) as e:
+                last_exc = e
+                import time
+
+                wait = self._BACKOFF_BASE * (2**attempt)
+                logger.warning(
+                    "embed_one_sync 失败 (%d/%d): %s", attempt + 1, self._MAX_RETRIES, e
+                )
+                time.sleep(wait)
+            except httpx.HTTPStatusError:
+                raise
+            except (KeyError, IndexError) as e:
+                raise ValueError(f"embed 响应格式错误: {e}") from e
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("重试循环结束但无异常")
 
     def embed_batch_sync(
         self, texts: list[str], batch_size: int = 32
@@ -271,22 +316,20 @@ class OllamaEmbedder:
         """批量文本 → 向量列表（同步，SDK 用）"""
         if not texts:
             return []
-        import httpx
 
+        client = self._get_sync_client()
         all_embeddings: list[list[float] | None] = []
-        with httpx.Client(
-            base_url=self._ollama_url,
-            timeout=httpx.Timeout(connect=3.0, read=10.0, write=10.0, pool=10.0),
-        ) as client:
-            for i in range(0, len(texts), batch_size):
-                batch = texts[i:i + batch_size]
-                try:
-                    resp = client.post(self._embed_endpoint(), json=self._embed_payload(batch))
-                    resp.raise_for_status()
-                    all_embeddings.extend(self._parse_embeddings(resp.json()))
-                except Exception as e:
-                    logger.warning("embed_batch_sync 第 %d 批失败: %s", i // batch_size, e)
-                    all_embeddings.extend([None] * len(batch))
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+            try:
+                resp = client.post(
+                    self._embed_endpoint(), json=self._embed_payload(batch)
+                )
+                resp.raise_for_status()
+                all_embeddings.extend(self._parse_embeddings(resp.json()))
+            except Exception as e:
+                logger.warning("embed_batch_sync 第 %d 批失败: %s", i // batch_size, e)
+                all_embeddings.extend([None] * len(batch))
         return all_embeddings
 
     # ── 可用性检测（合并 ollama_check.py）──
@@ -311,7 +354,9 @@ class OllamaEmbedder:
             resp = await client.get("/api/version", timeout=3.0)
             resp.raise_for_status()
             if "version" not in resp.json():
-                self._set_unavailable(f"端口 {self._ollama_url} 非 Ollama 服务，请检查端口冲突")
+                self._set_unavailable(
+                    f"端口 {self._ollama_url} 非 Ollama 服务，请检查端口冲突"
+                )
                 return False
         except (httpx.ConnectError, httpx.TimeoutException):
             self._set_unavailable("Ollama 未启动，请运行: ollama serve")
@@ -326,9 +371,13 @@ class OllamaEmbedder:
             resp.raise_for_status()
             models = resp.json().get("models", [])
             names = [m.get("name", "") for m in models]
-            found = any(n == self._model or n.startswith(f"{self._model}:") for n in names)
+            found = any(
+                n == self._model or n.startswith(f"{self._model}:") for n in names
+            )
             if not found:
-                self._set_unavailable(f"模型 {self._model} 未下载，请运行: ollama pull {self._model}")
+                self._set_unavailable(
+                    f"模型 {self._model} 未下载，请运行: ollama pull {self._model}"
+                )
                 return False
         except httpx.HTTPError as e:
             self._set_unavailable(f"Ollama 检测异常: {e}")
@@ -336,7 +385,9 @@ class OllamaEmbedder:
 
         # Embed 测试
         try:
-            resp = await client.post("/api/embed", json={"model": self._model, "input": "ping"}, timeout=15.0)
+            resp = await client.post(
+                "/api/embed", json={"model": self._model, "input": "ping"}, timeout=15.0
+            )
             resp.raise_for_status()
             embeddings = resp.json().get("embeddings", [])
             if not embeddings or not embeddings[0]:
@@ -357,7 +408,11 @@ class OllamaEmbedder:
         import httpx
 
         try:
-            resp = await client.post("/v1/embeddings", json={"model": self._model, "input": "ping"}, timeout=15.0)
+            resp = await client.post(
+                "/v1/embeddings",
+                json={"model": self._model, "input": "ping"},
+                timeout=15.0,
+            )
             resp.raise_for_status()
             data = resp.json().get("data", [])
             if not data or not data[0].get("embedding"):
@@ -412,3 +467,10 @@ class OllamaEmbedder:
                     logger.warning("httpx client 关闭异常: %s", e)
                 finally:
                     self._client = None
+        if self._sync_client:
+            try:
+                self._sync_client.close()
+            except Exception as e:
+                logger.warning("httpx sync client 关闭异常: %s", e)
+            finally:
+                self._sync_client = None

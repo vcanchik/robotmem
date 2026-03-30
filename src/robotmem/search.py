@@ -25,9 +25,10 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RecallResult:
     """recall 返回值"""
+
     memories: list[dict] = field(default_factory=list)
     total: int = 0
-    mode: str = "bm25_only"     # "bm25_only" / "hybrid" / "vec_only"
+    mode: str = "bm25_only"  # "bm25_only" / "hybrid" / "vec_only"
     query_ms: float = 0.0
 
 
@@ -170,10 +171,14 @@ def _recall_impl(
         merged = rrf_merge(bm25_results, vec_results, k=60)
         mode = "hybrid"
     elif bm25_results:
-        merged = [{**m, "_rrf_score": 1.0 / (60 + i + 1)} for i, m in enumerate(bm25_results)]
+        merged = [
+            {**m, "_rrf_score": 1.0 / (60 + i + 1)} for i, m in enumerate(bm25_results)
+        ]
         mode = "bm25_only"
     else:
-        merged = [{**m, "_rrf_score": 1.0 / (60 + i + 1)} for i, m in enumerate(vec_results)]
+        merged = [
+            {**m, "_rrf_score": 1.0 / (60 + i + 1)} for i, m in enumerate(vec_results)
+        ]
         mode = "vec_only"
 
     # sim/real 加权（antirez 产品架构 Round 2）+ 重新排序
@@ -254,6 +259,49 @@ def _prepare_recall(
     return top_k, session_id, top_k * fetch_mul
 
 
+def _search_recall_core(
+    query: str,
+    db: CogDatabase,
+    collection: str,
+    fetch_limit: int,
+    embedding: list[float] | None,
+    has_embedder: bool,
+    embed_unavailable_reason: str | None,
+    t0: float,
+) -> RecallResult:
+    """recall 核心搜索 — BM25 + 可选 Vec，async/sync 共用"""
+    # L2: BM25
+    try:
+        bm25_results = fts_search_memories(
+            db.conn, query, collection, limit=fetch_limit
+        )
+    except Exception as e:
+        logger.warning("recall BM25 搜索异常: %s", e)
+        bm25_results = []
+
+    # L2: Vec
+    vec_results: list[dict] = []
+    if has_embedder:
+        if embedding is not None:
+            try:
+                vec_results = vec_search_memories(
+                    db.conn,
+                    embedding,
+                    collection,
+                    limit=fetch_limit,
+                    vec_loaded=db.vec_loaded,
+                )
+            except Exception as e:
+                logger.warning("recall Vec 搜索异常: %s", e)
+        elif embed_unavailable_reason:
+            raise EmbeddingError(
+                f"Embedder 不可用: {embed_unavailable_reason}。"
+                f"如需纯 BM25 模式，请显式指定 embed_backend='none'"
+            )
+
+    return bm25_results, vec_results
+
+
 async def recall(
     query: str,
     db: CogDatabase,
@@ -265,48 +313,54 @@ async def recall(
     context_filter: dict | None = None,
     spatial_sort: dict | None = None,
 ) -> RecallResult:
-    """认知搜索主入口（async，MCP Server 用）
-
-    三层防御：
-    - L1 事前：query 非空 + top_k 范围
-    - L2 事中：try-except 搜索异常不崩溃
-    - L3 事后：touch 更新访问计数 + 日志
-    """
+    """认知搜索主入口（async，MCP Server 用）"""
     t0 = time.monotonic()
 
     if not query or not query.strip():
         return RecallResult()
 
     top_k, session_id, fetch_limit = _prepare_recall(
-        query, top_k, session_id, context_filter, spatial_sort,
+        query,
+        top_k,
+        session_id,
+        context_filter,
+        spatial_sort,
     )
 
-    # L2: BM25 搜索
-    try:
-        bm25_results = fts_search_memories(db.conn, query, collection, limit=fetch_limit)
-    except Exception as e:
-        logger.warning("recall BM25 搜索异常: %s", e)
-        bm25_results = []
+    # async embedding
+    embedding = None
+    has_embedder = embedder is not None
+    embed_reason = getattr(embedder, "unavailable_reason", None) if embedder else None
 
-    # L2: Vec 搜索（async embed）
-    vec_results: list[dict] = []
     if embedder and embedder.available:
         try:
             embedding = await embedder.embed_one(query)
-            vec_results = vec_search_memories(
-                db.conn, embedding, collection, limit=fetch_limit, vec_loaded=db.vec_loaded,
-            )
         except Exception as e:
-            logger.warning("recall Vec 搜索异常: %s", e)
-    elif embedder:
-        raise EmbeddingError(
-            f"Embedder 不可用: {embedder.unavailable_reason}。"
-            f"如需纯 BM25 模式，请显式指定 embed_backend='none'"
-        )
+            logger.warning("recall embedding 异常: %s", e)
+
+    bm25_results, vec_results = _search_recall_core(
+        query,
+        db,
+        collection,
+        fetch_limit,
+        embedding,
+        has_embedder,
+        embed_reason,
+        t0,
+    )
 
     return _recall_impl(
-        query, db, bm25_results, vec_results, collection,
-        top_k, min_confidence, session_id, context_filter, spatial_sort, t0,
+        query,
+        db,
+        bm25_results,
+        vec_results,
+        collection,
+        top_k,
+        min_confidence,
+        session_id,
+        context_filter,
+        spatial_sort,
+        t0,
     )
 
 
@@ -321,43 +375,52 @@ def recall_sync(
     context_filter: dict | None = None,
     spatial_sort: dict | None = None,
 ) -> RecallResult:
-    """认知搜索主入口（sync，SDK 用）
-
-    与 recall() 逻辑完全一致，区别仅在 embedding 用 embed_one_sync()。
-    """
+    """认知搜索主入口（sync，SDK 用）"""
     t0 = time.monotonic()
 
     if not query or not query.strip():
         return RecallResult()
 
     top_k, session_id, fetch_limit = _prepare_recall(
-        query, top_k, session_id, context_filter, spatial_sort,
+        query,
+        top_k,
+        session_id,
+        context_filter,
+        spatial_sort,
     )
 
-    # L2: BM25 搜索
-    try:
-        bm25_results = fts_search_memories(db.conn, query, collection, limit=fetch_limit)
-    except Exception as e:
-        logger.warning("recall_sync BM25 搜索异常: %s", e)
-        bm25_results = []
+    # sync embedding
+    embedding = None
+    has_embedder = embedder is not None
+    embed_reason = getattr(embedder, "unavailable_reason", None) if embedder else None
 
-    # L2: Vec 搜索（sync embed）
-    vec_results: list[dict] = []
     if embedder and embedder.available:
         try:
             embedding = embedder.embed_one_sync(query)
-            vec_results = vec_search_memories(
-                db.conn, embedding, collection, limit=fetch_limit, vec_loaded=db.vec_loaded,
-            )
         except Exception as e:
-            logger.warning("recall_sync Vec 搜索异常: %s", e)
-    elif embedder:
-        raise EmbeddingError(
-            f"Embedder 不可用: {embedder.unavailable_reason}。"
-            f"如需纯 BM25 模式，请显式指定 embed_backend='none'"
-        )
+            logger.warning("recall_sync embedding 异常: %s", e)
+
+    bm25_results, vec_results = _search_recall_core(
+        query,
+        db,
+        collection,
+        fetch_limit,
+        embedding,
+        has_embedder,
+        embed_reason,
+        t0,
+    )
 
     return _recall_impl(
-        query, db, bm25_results, vec_results, collection,
-        top_k, min_confidence, session_id, context_filter, spatial_sort, t0,
+        query,
+        db,
+        bm25_results,
+        vec_results,
+        collection,
+        top_k,
+        min_confidence,
+        session_id,
+        context_filter,
+        spatial_sort,
+        t0,
     )
